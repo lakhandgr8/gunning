@@ -1,4 +1,7 @@
 import streamlit as st
+import streamlit_authenticator as stauth
+import yaml
+from yaml.loader import SafeLoader
 import pandas as pd
 from datetime import datetime, date
 import plotly.express as px
@@ -31,9 +34,47 @@ STOCK_COLUMNS = [
 ]
 
 # ============================================================
-# PAGE CONFIG
+# PAGE CONFIG (Must be first Streamlit command)
 # ============================================================
 st.set_page_config(page_title=PAGE_TITLE, page_icon=PAGE_ICON, layout="wide")
+
+
+# ============================================================
+# AUTHENTICATION LAYER
+# ============================================================
+# Load the configuration file
+try:
+    with open('config.yaml') as file:
+        config = yaml.load(file, Loader=SafeLoader)
+except FileNotFoundError:
+    st.error("🚨 Missing 'config.yaml' file. Please create it to enable login.")
+    st.stop()
+
+# Initialize the authenticator
+authenticator = stauth.Authenticate(
+    config['credentials'],
+    config['cookie']['name'],
+    config['cookie']['key'],
+    config['cookie']['expiry_days']
+)
+
+# Render the login widget
+try:
+    authenticator.login()
+except Exception as e:
+    st.error(e)
+
+# Check authentication status and halt execution if not logged in
+if st.session_state["authentication_status"] is False:
+    st.error('Username/password is incorrect')
+    st.stop()
+elif st.session_state["authentication_status"] is None:
+    st.warning('Please enter your username and password to access the register.')
+    st.stop()
+
+# If we reach this line, the user is successfully logged in!
+# ============================================================
+
 
 # ============================================================
 # CSS
@@ -42,7 +83,7 @@ st.markdown("""
 <style>
 [data-testid="stAppViewContainer"] { background:#f5f7fa; }
 [data-testid="stSidebar"]          { background:#1a1a2e; }
-[data-testid="stSidebar"] *        { color:#e0e0e0 !important; }
+[data-testid="stSidebar"] * { color:#e0e0e0 !important; }
 [data-testid="stSidebar"] h1,
 [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3       { color:#ffffff !important; }
@@ -434,15 +475,6 @@ def download_widget(
     Renders a filename input + download button pair.
     The user can type their preferred filename before downloading.
     The browser's native Save-As dialog will use this as the suggested name.
-
-    Parameters
-    ----------
-    label         : Button label text
-    data          : File bytes to download
-    suggested_name: Default filename (without extension)
-    mime          : MIME type string
-    file_ext      : Extension including dot  e.g. '.csv'
-    help_text     : Optional hint shown below the input
     """
     # Sanitise default name
     clean_default = suggested_name.replace(' ', '_')
@@ -612,6 +644,12 @@ with st.sidebar:
     ], label_visibility="collapsed")
 
     st.markdown("---")
+    
+    # Add Logout Button here!
+    authenticator.logout('Log Out', 'sidebar')
+    st.markdown(f"**Logged in as:** {st.session_state['name']}")
+    
+    st.markdown("---")
     st.markdown("### ⚙️ Settings")
     st.session_state.low_thr = st.number_input(
         "Low Stock Threshold (Kg):",
@@ -745,8 +783,8 @@ def render_dashboard():
         ("Total Received", f"{tot_rcv:.0f} Kg",  f"{kg2mt(tot_rcv):.2f} MT"),
         ("Total Consumed", f"{tot_con:.0f} Kg",  "cumulative"),
         ("Avg per Entry",  f"{avg_use:.0f} Kg",  "per consumption"),
-        ("Stock Duration", days_label,            "at avg usage"),
-        ("Utilization",    f"{eff:.1f}%",         "consumed / received"),
+        ("Stock Duration", days_label,             "at avg usage"),
+        ("Utilization",    f"{eff:.1f}%",          "consumed / received"),
     ]
     for col, (lbl, val, sub) in zip(cols, kpi_data):
         col.markdown(kpi(lbl, val, sub), unsafe_allow_html=True)
@@ -1486,8 +1524,8 @@ def render_analytics():
         ("Total Received", f"{tot_rcv:.0f} Kg",  f"{kg2mt(tot_rcv):.2f} MT"),
         ("Total Consumed", f"{tot_con:.0f} Kg",  "cumulative"),
         ("Avg/Entry",      f"{avg_use:.0f} Kg",  "per consumption"),
-        ("Stock Duration", days_label,            "at avg usage"),
-        ("Utilization",    f"{eff:.1f}%",         "consumed / received"),
+        ("Stock Duration", days_label,             "at avg usage"),
+        ("Utilization",    f"{eff:.1f}%",          "consumed / received"),
     ]
     for kc, (lbl, val, sub) in zip(k_cols, kpi_list):
         kc.markdown(kpi(lbl, val, sub), unsafe_allow_html=True)
@@ -1689,7 +1727,7 @@ def render_analytics():
 
 
 # ============================================================
-# MODULE 8 — DOWNLOAD REPORTS  ← MAIN FOCUS
+# MODULE 8 — DOWNLOAD REPORTS
 # ============================================================
 def render_download_reports():
     st.header("💾 Download Reports")
@@ -1733,7 +1771,7 @@ def render_download_reports():
 
     st.info(
         "📅 Filtered range: **" + fmt_date(pd.Timestamp(dfrom))
-        + "** → **" + fmt_date(pd.Timestamp(dto)) + "**  |  "
+        + "** → **" + fmt_date(pd.Timestamp(dto)) + "** |  "
         + "**" + str(len(df_filt)) + "** total entries  |  "
         + "**" + str(len(rcv_filt)) + "** receipts  |  "
         + "**" + str(len(con_filt)) + "** consumptions"
