@@ -186,34 +186,47 @@ div[data-testid="stHorizontalBlock"] { align-items:center; }
 </style>
 """, unsafe_allow_html=True)
 
-
 # ============================================================
-# DATA PERSISTENCE
+# DATA PERSISTENCE (Google Sheets Version)
 # ============================================================
 def load_data() -> pd.DataFrame:
-    if os.path.exists(DATA_FILE):
-        try:
-            df = pd.read_csv(DATA_FILE)
+    try:
+        # Connect to Google Sheets
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        
+        # Read the data from the 'StockData' tab
+        df = conn.read(worksheet="StockData", ttl=0) # ttl=0 ensures it always fetches fresh data
+        
+        # Clean up empty rows that Google Sheets sometimes pulls
+        df = df.dropna(how='all')
+        
+        if len(df) > 0:
             df['Date'] = pd.to_datetime(df['Date'])
-            for col in STOCK_COLUMNS:
-                if col not in df.columns:
-                    df[col] = (
-                        0.0 if col not in
-                        ['Date', 'Remarks', 'Entry Type', 'Entry ID']
-                        else ''
-                    )
-            return df
-        except Exception as e:
-            st.error("Error loading data: " + str(e))
-    return pd.DataFrame(columns=STOCK_COLUMNS)
-
+        else:
+            # If sheet is empty (except for headers), return an empty dataframe
+            df = pd.DataFrame(columns=STOCK_COLUMNS)
+            
+        return df
+    except Exception as e:
+        st.error(f"Error loading data from Google Sheets: {str(e)}")
+        return pd.DataFrame(columns=STOCK_COLUMNS)
 
 def save_data(df: pd.DataFrame) -> bool:
     try:
-        df.to_csv(DATA_FILE, index=False)
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        
+        # Ensure dates are properly formatted as strings before sending to Google Sheets
+        df_out = df.copy()
+        df_out['Date'] = df_out['Date'].dt.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Overwrite the 'StockData' tab with the new dataframe
+        conn.update(worksheet="StockData", data=df_out)
+        
+        # Clear the cache so the next load gets the fresh data
+        st.cache_data.clear()
         return True
     except Exception as e:
-        st.error("Error saving data: " + str(e))
+        st.error(f"Error saving data to Google Sheets: {str(e)}")
         return False
 
 
@@ -2108,4 +2121,5 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True
 )
+
 
