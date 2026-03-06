@@ -8,7 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from io import BytesIO
 import os
-
+from streamlit_gsheets import GSheetsConnection
 # ============================================================
 # CONFIGURATION & CONSTANTS
 # ============================================================
@@ -2108,3 +2108,4 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True
 )
+
