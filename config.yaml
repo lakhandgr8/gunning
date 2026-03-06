@@ -2,16 +2,13 @@ credentials:
   usernames:
     admin:
       email: na
-      name: admin
+      name: eaf1
       password: eaf1@123
-    manager:
-      email: na
-      name: EAF1
-      password: eaf@123
 cookie:
   expiry_days: 9999
   key: gunning_mass_secret_signature_key # Change this to a random string
 
   name: eaf_stock_cookie
+
 
 
