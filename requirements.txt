@@ -5,3 +5,4 @@ plotly==6.5.0
 streamlit-authenticator
 openpyxl==3.1.5
 PyYAML
+st-gsheets-connection
