@@ -7,11 +7,11 @@ credentials:
     manager:
       email: na
       name: EAF1
-      # This is the hashed version of the password: 'eaf'
-      password: eaf1@123
+      password: eaf@123
 cookie:
   expiry_days: 9999
   key: gunning_mass_secret_signature_key # Change this to a random string
 
   name: eaf_stock_cookie
+
 
