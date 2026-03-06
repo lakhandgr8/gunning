@@ -1,0 +1,16 @@
+credentials:
+  usernames:
+    admin:
+      email: eaf1@jindalstainless.com
+      name: admin
+      # This is the hashed version of the password: 'password123'
+      password: $2b$12$R.uJ3Z.F5N.zR/w.X.zR/eZ.Q.zR/w.X.zR/w.X.zR/w.X.zR/w.X
+    manager:
+      email: ramlakhan.gupta@jindalstainless.com
+      name: eaf
+      # This is the hashed version of the password: 'eaf'
+      password: $2b$12$6/Y.T.zR/w.X.zR/w.X.zR/eZ.Q.zR/w.X.zR/w.X.zR/w.X.zR/w.X
+cookie:
+  expiry_days: 9999
+  key: gunning_mass_secret_signature_key # Change this to a random string
+  name: eaf_stock_cookie
