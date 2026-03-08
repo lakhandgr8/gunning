@@ -51,37 +51,46 @@ except FileNotFoundError:
     st.error("🚨 Missing 'config.yaml' file. Please create it to enable login.")
     st.stop()
 
-# ── Login page CSS (injected before auth widget renders) ──────────────────────
+# ── Login page CSS ────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-/* ── Full-page login background ── */
-[data-testid="stAppViewContainer"]:has(section[data-testid="stMain"] div[data-testid="stForm"]) {
-    background: linear-gradient(135deg, #0f3460 0%, #16213e 50%, #1a1a2e 100%) !important;
+/* ── Global page background ── */
+[data-testid="stAppViewContainer"] {
+    background: linear-gradient(135deg, #0a1628 0%, #0f3460 45%, #16213e 100%) !important;
     min-height: 100vh;
 }
-[data-testid="stAppViewContainer"]:has(section[data-testid="stMain"] div[data-testid="stForm"])
-    [data-testid="stMain"] {
-    background: transparent !important;
+[data-testid="stMain"] { background: transparent !important; }
+[data-testid="block-container"] {
+    padding-top: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    max-width: 100% !important;
 }
+header[data-testid="stHeader"] { background: transparent !important; box-shadow: none !important; }
+#MainMenu, footer { visibility: hidden; }
 
-/* ── Floating card around the form ── */
+/* ── Login card: fixed top-right corner ── */
 div[data-testid="stForm"] {
+    position: fixed !important;
+    top: 28px !important;
+    right: 32px !important;
+    width: 320px !important;
     background: rgba(255,255,255,0.97) !important;
-    border-radius: 20px !important;
-    padding: 36px 32px 28px 32px !important;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.45) !important;
-    max-width: 420px;
-    margin: 0 auto;
+    border-radius: 18px !important;
+    padding: 28px 26px 22px !important;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.2) !important;
+    z-index: 9999 !important;
+    border-top: 4px solid #e8a020 !important;
 }
 
 /* ── Input fields ── */
 div[data-testid="stForm"] input {
-    border-radius: 10px !important;
+    border-radius: 9px !important;
     border: 1.5px solid #dde1ee !important;
     background: #f8f9ff !important;
-    font-size: 15px !important;
-    padding: 10px 14px !important;
-    transition: border-color .2s;
+    font-size: 14px !important;
+    padding: 9px 13px !important;
+    transition: all .2s !important;
 }
 div[data-testid="stForm"] input:focus {
     border-color: #0f3460 !important;
@@ -89,72 +98,174 @@ div[data-testid="stForm"] input:focus {
     box-shadow: 0 0 0 3px rgba(15,52,96,.12) !important;
 }
 
-/* ── Login submit button ── */
+/* ── Login button ── */
 div[data-testid="stForm"] button[kind="primaryFormSubmit"],
 div[data-testid="stForm"] button[data-testid="baseButton-primaryFormSubmit"] {
-    background: linear-gradient(135deg, #0f3460, #16213e) !important;
+    background: linear-gradient(135deg, #e8a020 0%, #c97d10 100%) !important;
     color: white !important;
-    border-radius: 10px !important;
+    border-radius: 9px !important;
     font-weight: 700 !important;
-    font-size: 15px !important;
-    letter-spacing: .5px !important;
+    font-size: 14px !important;
+    letter-spacing: .4px !important;
     border: none !important;
     width: 100% !important;
-    padding: 12px !important;
-    margin-top: 6px !important;
-    box-shadow: 0 4px 14px rgba(15,52,96,.35) !important;
-    transition: opacity .2s !important;
+    padding: 11px !important;
+    margin-top: 4px !important;
+    box-shadow: 0 4px 14px rgba(232,160,32,.4) !important;
+    transition: opacity .2s, transform .15s !important;
 }
 div[data-testid="stForm"] button:hover {
-    opacity: 0.88 !important;
+    opacity: 0.9 !important;
+    transform: translateY(-1px) !important;
 }
 
-/* ── Label text ── */
+/* ── Labels ── */
 div[data-testid="stForm"] label p {
     font-weight: 600 !important;
     color: #1a1a2e !important;
-    font-size: 13px !important;
+    font-size: 12.5px !important;
     letter-spacing: .3px;
 }
 
-/* ── Hide default Streamlit header/footer on login page ── */
-header[data-testid="stHeader"] { background: transparent !important; }
-#MainMenu, footer { visibility: hidden; }
+/* ── Remember me checkbox ── */
+div[data-testid="stCheckbox"] {
+    position: fixed !important;
+    top: 314px !important;
+    right: 32px !important;
+    width: 320px !important;
+    background: rgba(255,255,255,0.95) !important;
+    border-radius: 0 0 18px 18px !important;
+    padding: 8px 26px 14px !important;
+    box-shadow: 0 12px 32px rgba(0,0,0,.3) !important;
+    z-index: 9998 !important;
+    border-top: 1px solid #eee !important;
+}
+div[data-testid="stCheckbox"] label p {
+    font-size: 12.5px !important;
+    color: #444 !important;
+    font-weight: 500 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ── Login page hero (only shown when not authenticated) ──────────────────────
+# ── Full-page hero (centre of screen) ────────────────────────────────────────
 if not st.session_state.get("authentication_status"):
-    _, hero_col, _ = st.columns([1, 2, 1])
-    with hero_col:
-        st.markdown("""
-        <div style="text-align:center; padding: 48px 0 24px 0;">
-            <div style="font-size: 64px; margin-bottom: 10px;">🏭</div>
-            <h1 style="color: white; font-size: 1.8rem; font-weight: 800;
-                       margin: 0 0 6px 0; letter-spacing: 1px;">
-                Gunning Mass Stock
-            </h1>
-            <p style="color: rgba(255,255,255,0.65); font-size: 1rem; margin: 0 0 32px 0;">
-                EAF Sidewall Repair · Stock Management System
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown("""
+    <div style="
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+        z-index: 1;
+        padding-right: 180px;
+    ">
+        <!-- Decorative rings -->
+        <div style="
+            position: absolute;
+            width: 480px; height: 480px;
+            border-radius: 50%;
+            border: 1.5px solid rgba(255,255,255,0.06);
+            top: 50%; left: 42%;
+            transform: translate(-50%,-50%);
+        "></div>
+        <div style="
+            position: absolute;
+            width: 340px; height: 340px;
+            border-radius: 50%;
+            border: 1.5px solid rgba(255,255,255,0.09);
+            top: 50%; left: 42%;
+            transform: translate(-50%,-50%);
+        "></div>
 
-# ── Remember Me toggle ────────────────────────────────────────────────────────
-# We render this BEFORE the login form so it can influence expiry_days
+        <!-- Icon glow -->
+        <div style="
+            width: 110px; height: 110px;
+            background: linear-gradient(135deg, #e8a020, #c97d10);
+            border-radius: 28px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 52px;
+            box-shadow: 0 0 60px rgba(232,160,32,0.35), 0 8px 32px rgba(0,0,0,0.4);
+            margin-bottom: 28px;
+        ">🏭</div>
+
+        <!-- Title -->
+        <h1 style="
+            color: white;
+            font-size: 2.6rem;
+            font-weight: 800;
+            margin: 0 0 10px 0;
+            letter-spacing: 1.5px;
+            text-align: center;
+            text-shadow: 0 2px 20px rgba(0,0,0,0.4);
+        ">Gunning Mass<br>Stock Register</h1>
+
+        <!-- Subtitle -->
+        <p style="
+            color: rgba(255,255,255,0.6);
+            font-size: 1.05rem;
+            margin: 0 0 36px 0;
+            text-align: center;
+            letter-spacing: .5px;
+        ">EAF Sidewall Repair · Stock Management System</p>
+
+        <!-- Stats pills -->
+        <div style="display: flex; gap: 14px; flex-wrap: wrap; justify-content: center;">
+            <div style="
+                background: rgba(255,255,255,0.1);
+                backdrop-filter: blur(10px);
+                border: 1px solid rgba(255,255,255,0.18);
+                border-radius: 50px;
+                padding: 8px 20px;
+                color: white;
+                font-size: 13px;
+                font-weight: 600;
+            ">📦 Real-time Stock Tracking</div>
+            <div style="
+                background: rgba(255,255,255,0.1);
+                backdrop-filter: blur(10px);
+                border: 1px solid rgba(255,255,255,0.18);
+                border-radius: 50px;
+                padding: 8px 20px;
+                color: white;
+                font-size: 13px;
+                font-weight: 600;
+            ">📊 Analytics &amp; Reports</div>
+            <div style="
+                background: rgba(255,255,255,0.1);
+                backdrop-filter: blur(10px);
+                border: 1px solid rgba(255,255,255,0.18);
+                padding: 8px 20px;
+                border-radius: 50px;
+                color: white;
+                font-size: 13px;
+                font-weight: 600;
+            ">☁️ Cloud Sync via Google Sheets</div>
+        </div>
+
+        <!-- Footer text -->
+        <p style="
+            position: fixed; bottom: 20px;
+            color: rgba(255,255,255,0.25);
+            font-size: 11.5px;
+            letter-spacing: .5px;
+        ">© 2025 Gunning Mass Stock Management · EAF Operations</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ── Remember Me (rendered before authenticator so it sets expiry_days) ───────
 if not st.session_state.get("authentication_status"):
-    _, rm_col, _ = st.columns([1, 2, 1])
-    with rm_col:
-        remember_me = st.checkbox(
-            "🔒 Remember me for 30 days",
-            value=st.session_state.get("remember_me_pref", False),
-            key="remember_me_checkbox"
-        )
-        st.session_state["remember_me_pref"] = remember_me
+    remember_me = st.checkbox(
+        "🔒 Remember me for 30 days",
+        value=st.session_state.get("remember_me_pref", False),
+        key="remember_me_checkbox"
+    )
+    st.session_state["remember_me_pref"] = remember_me
 else:
     remember_me = st.session_state.get("remember_me_pref", False)
 
-# Set cookie expiry based on Remember Me
 expiry_days = 30 if remember_me else 1
 
 authenticator = stauth.Authenticate(
@@ -164,42 +275,31 @@ authenticator = stauth.Authenticate(
     expiry_days
 )
 
-# ── Render the login widget inside a centred column ───────────────────────────
-if not st.session_state.get("authentication_status"):
-    _, login_col, _ = st.columns([1, 2, 1])
-    with login_col:
-        try:
-            authenticator.login()
-        except Exception as e:
-            st.error(str(e))
-else:
-    try:
-        authenticator.login()
-    except Exception:
-        pass
+# ── Render login widget (CSS positions it top-right) ─────────────────────────
+try:
+    authenticator.login()
+except Exception as e:
+    if st.session_state.get("authentication_status") is None:
+        st.error(str(e))
 
-# ── Handle auth outcomes ──────────────────────────────────────────────────────
+# ── Auth outcomes ─────────────────────────────────────────────────────────────
 if st.session_state["authentication_status"] is False:
-    _, err_col, _ = st.columns([1, 2, 1])
-    with err_col:
-        st.markdown("""
-        <div style="background:#ffe0e0; border-left:4px solid #e53935;
-                    border-radius:10px; padding:12px 16px; margin-top:8px;
-                    color:#b71c1c; font-weight:600; font-size:14px;">
-            ❌ Incorrect username or password. Please try again.
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown("""
+    <div style="
+        position: fixed; top: 285px; right: 32px;
+        width: 320px; z-index: 9999;
+        background: #ffe8e8;
+        border-left: 4px solid #e53935;
+        border-radius: 10px;
+        padding: 10px 14px;
+        color: #b71c1c;
+        font-weight: 600;
+        font-size: 13px;
+        box-shadow: 0 4px 16px rgba(229,57,53,.2);
+    ">❌ Incorrect username or password.</div>
+    """, unsafe_allow_html=True)
     st.stop()
 elif st.session_state["authentication_status"] is None:
-    _, hint_col, _ = st.columns([1, 2, 1])
-    with hint_col:
-        st.markdown("""
-        <div style="background:rgba(255,255,255,0.12); border-radius:10px;
-                    padding:10px 16px; margin-top:4px; text-align:center;
-                    color:rgba(255,255,255,0.7); font-size:13px;">
-            Enter your credentials above to continue
-        </div>
-        """, unsafe_allow_html=True)
     st.stop()
 
 
