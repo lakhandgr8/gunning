@@ -713,6 +713,62 @@ with st.sidebar:
     )
 
     st.markdown("---")
+    st.markdown("### 🔧 Connection Debug")
+    if st.button("🔍 Test Google Sheets", key="debug_btn"):
+        with st.spinner("Testing..."):
+            try:
+                # Step 1: secrets present?
+                gsheet_secrets = dict(st.secrets["connections"]["gsheets"])
+                st.success("✅ Secrets found")
+
+                # Step 2: required keys?
+                required = ["spreadsheet", "private_key", "client_email"]
+                missing  = [k for k in required if k not in gsheet_secrets]
+                if missing:
+                    st.error(f"❌ Missing secret keys: {missing}")
+                else:
+                    st.success("✅ All required keys present")
+                    st.caption(f"client_email: {gsheet_secrets.get('client_email','?')}")
+                    st.caption(f"spreadsheet: {gsheet_secrets.get('spreadsheet','?')[:60]}...")
+
+                # Step 3: can we authenticate?
+                from google.oauth2.service_account import Credentials
+                import gspread as _gs
+                creds_dict = {k: v for k, v in gsheet_secrets.items()
+                              if k not in ("spreadsheet","type","allow_programmatic_writes")}
+                scopes = ["https://www.googleapis.com/auth/spreadsheets",
+                          "https://www.googleapis.com/auth/drive"]
+                creds  = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+                client = _gs.authorize(creds)
+                st.success("✅ Google auth OK")
+
+                # Step 4: can we open the sheet?
+                sh = client.open_by_url(gsheet_secrets["spreadsheet"])
+                st.success(f"✅ Opened spreadsheet: '{sh.title}'")
+
+                # Step 5: can we find/read the worksheet?
+                try:
+                    ws = sh.worksheet("StockData")
+                    rows = ws.get_all_records()
+                    st.success(f"✅ StockData worksheet found — {len(rows)} data rows")
+                except Exception as e:
+                    st.warning(f"⚠️ StockData tab not found: {e}")
+
+                # Step 6: test write
+                try:
+                    ws = sh.worksheet("StockData")
+                    existing = ws.acell('A1').value
+                    st.success(f"✅ Read A1: '{existing}'")
+                    st.info("✅ All checks passed — connection is working!")
+                except Exception as e:
+                    st.error(f"❌ Read test failed: {e}")
+
+            except KeyError as e:
+                st.error(f"❌ secrets.toml missing key: {e}")
+            except Exception as e:
+                st.error(f"❌ Connection failed: {type(e).__name__}: {e}")
+
+    st.markdown("---")
     st.markdown("### 📊 Quick Status")
     if len(st.session_state.stock_data) > 0:
         _c = get_current_stock()
