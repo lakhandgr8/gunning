@@ -9,13 +9,14 @@ import plotly.graph_objects as go
 from io import BytesIO
 import os
 from streamlit_gsheets import GSheetsConnection
+
 # ============================================================
 # CONFIGURATION & CONSTANTS
 # ============================================================
 PAGE_TITLE  = "Gunning Mass Stock Register"
 PAGE_ICON   = "🏭"
 DATE_FORMAT = '%d-%b-%Y'
-DATA_FILE   = "gunning_mass_stock.csv"
+DATA_FILE   = "Google Sheets (StockData tab)"
 DEFAULT_LOW_STOCK_THRESHOLD = 500.0
 
 REPAIR_ZONES = [
@@ -42,7 +43,6 @@ st.set_page_config(page_title=PAGE_TITLE, page_icon=PAGE_ICON, layout="wide")
 # ============================================================
 # AUTHENTICATION LAYER
 # ============================================================
-# Load the configuration file
 try:
     with open('config.yaml') as file:
         config = yaml.load(file, Loader=SafeLoader)
@@ -50,7 +50,6 @@ except FileNotFoundError:
     st.error("🚨 Missing 'config.yaml' file. Please create it to enable login.")
     st.stop()
 
-# Initialize the authenticator
 authenticator = stauth.Authenticate(
     config['credentials'],
     config['cookie']['name'],
@@ -58,22 +57,17 @@ authenticator = stauth.Authenticate(
     config['cookie']['expiry_days']
 )
 
-# Render the login widget
 try:
     authenticator.login()
 except Exception as e:
     st.error(e)
 
-# Check authentication status and halt execution if not logged in
 if st.session_state["authentication_status"] is False:
     st.error('Username/password is incorrect')
     st.stop()
 elif st.session_state["authentication_status"] is None:
     st.warning('Please enter your username and password to access the register.')
     st.stop()
-
-# If we reach this line, the user is successfully logged in!
-# ============================================================
 
 
 # ============================================================
@@ -186,48 +180,135 @@ div[data-testid="stHorizontalBlock"] { align-items:center; }
 </style>
 """, unsafe_allow_html=True)
 
+
 # ============================================================
-# DATA PERSISTENCE (Google Sheets Version)
+# DATA PERSISTENCE — Google Sheets (FIXED)
 # ============================================================
+
+def _get_conn():
+    """
+    Return a GSheetsConnection.  Cached as a resource so the same
+    authenticated client is reused; call st.cache_resource.clear()
+    when you need a brand-new connection.
+    """
+    return st.connection("gsheets", type=GSheetsConnection)
+
+
+def _sanitize_for_sheets(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Replace every NaN / None / NaT with a safe default before
+    sending to Google Sheets.  conn.update() silently aborts when
+    it encounters null values in certain column types.
+    """
+    out = df.copy()
+
+    # Format dates as plain strings — GSheets handles these fine
+    out['Date'] = pd.to_datetime(out['Date']).dt.strftime('%Y-%m-%d %H:%M:%S')
+
+    # Numeric columns → 0.0 instead of NaN
+    num_cols = [
+        'Entry ID',
+        'Opening Stock (Kg)',
+        'Received from Store (MT)',
+        'Received from Store (Kg)',
+        'Used for Sidewall Repair (Kg)',
+        'Closing Stock (Kg)',
+        'Total Consumption Till Date (Kg)',
+    ]
+    for col in num_cols:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors='coerce').fillna(0.0)
+
+    # String columns → empty string instead of NaN
+    for col in ['Entry Type', 'Remarks']:
+        if col in out.columns:
+            out[col] = out[col].fillna('').astype(str)
+
+    return out
+
+
 def load_data() -> pd.DataFrame:
+    """
+    Read the StockData worksheet from Google Sheets.
+    Returns an empty DataFrame (with correct columns) if the sheet
+    is blank or an error occurs — never returns None.
+    """
     try:
-        # Connect to Google Sheets
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        
-        # Read the data from the 'StockData' tab
-        df = conn.read(worksheet="StockData", ttl=0) # ttl=0 ensures it always fetches fresh data
-        
-        # Clean up empty rows that Google Sheets sometimes pulls
-        df = df.dropna(how='all')
-        
-        if len(df) > 0:
-            df['Date'] = pd.to_datetime(df['Date'])
-        else:
-            # If sheet is empty (except for headers), return an empty dataframe
-            df = pd.DataFrame(columns=STOCK_COLUMNS)
-            
+        conn = _get_conn()
+        # ttl=0  →  always fetch fresh data from Google
+        df = conn.read(worksheet="StockData", ttl=0, usecols=STOCK_COLUMNS)
+
+        # Drop completely empty rows Google Sheets sometimes appends
+        df = df.dropna(how='all').reset_index(drop=True)
+
+        if len(df) == 0:
+            return pd.DataFrame(columns=STOCK_COLUMNS)
+
+        # Parse dates robustly
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+
+        # Coerce all numeric columns (guards against stray strings)
+        num_cols = [
+            'Entry ID',
+            'Opening Stock (Kg)',
+            'Received from Store (MT)',
+            'Received from Store (Kg)',
+            'Used for Sidewall Repair (Kg)',
+            'Closing Stock (Kg)',
+            'Total Consumption Till Date (Kg)',
+        ]
+        for col in num_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+
+        df['Entry ID'] = df['Entry ID'].astype(int)
+        df['Remarks']  = df['Remarks'].fillna('').astype(str)
+
         return df
+
     except Exception as e:
-        st.error(f"Error loading data from Google Sheets: {str(e)}")
+        st.error(f"❌ Error loading data from Google Sheets: {e}")
         return pd.DataFrame(columns=STOCK_COLUMNS)
 
+
 def save_data(df: pd.DataFrame) -> bool:
-    try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        
-        # Ensure dates are properly formatted as strings before sending to Google Sheets
-        df_out = df.copy()
-        df_out['Date'] = df_out['Date'].dt.strftime('%Y-%m-%d %H:%M:%S')
-        
-        # Overwrite the 'StockData' tab with the new dataframe
-        conn.update(worksheet="StockData", data=df_out)
-        
-        # Clear the cache so the next load gets the fresh data
-        st.cache_data.clear()
-        return True
-    except Exception as e:
-        st.error(f"Error saving data to Google Sheets: {str(e)}")
-        return False
+    """
+    Overwrite the StockData worksheet with df.
+
+    Key fixes vs. original:
+      1. _sanitize_for_sheets() ensures no NaN reaches conn.update()
+      2. st.cache_resource.clear() forces a fresh connection object
+         so the next conn.read() actually hits the network.
+      3. Wrapped in a retry (once) in case of transient API errors.
+    """
+    if df is None or len(df) == 0:
+        # Still write the header row so the sheet is not orphaned
+        df = pd.DataFrame(columns=STOCK_COLUMNS)
+
+    df_out = _sanitize_for_sheets(df)
+
+    for attempt in range(2):          # try twice before giving up
+        try:
+            conn = _get_conn()
+            conn.update(worksheet="StockData", data=df_out)
+
+            # ── CRITICAL FIX ──────────────────────────────────────────
+            # Clear the *resource* cache so the connection object is
+            # rebuilt on next call, forcing a real network read.
+            # (cache_data.clear() alone does NOT achieve this.)
+            st.cache_resource.clear()
+            # ─────────────────────────────────────────────────────────
+            return True
+
+        except Exception as e:
+            if attempt == 0:
+                # First failure: clear everything and retry once
+                st.cache_resource.clear()
+                continue
+            st.error(f"❌ Error saving data to Google Sheets: {e}")
+            return False
+
+    return False
 
 
 # ============================================================
@@ -320,7 +401,6 @@ def _badge(entry_type: str) -> str:
 # REPORT GENERATION HELPERS
 # ============================================================
 def prepare_export_df(df: pd.DataFrame) -> pd.DataFrame:
-    """Format DataFrame for export — readable dates, rounded numbers."""
     out = df.copy()
     out['Date'] = out['Date'].apply(fmt_date)
     for col in ['Opening Stock (Kg)', 'Received from Store (Kg)',
@@ -336,29 +416,17 @@ def build_csv(df: pd.DataFrame) -> bytes:
 
 
 def build_excel(df_all: pd.DataFrame) -> bytes:
-    """
-    Build multi-sheet Excel:
-      Sheet 1 — All Entries
-      Sheet 2 — Receipts Only
-      Sheet 3 — Consumption Only
-      Sheet 4 — Summary
-    """
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine='openpyxl') as writer:
         edf = prepare_export_df(df_all)
-
-        # All entries
         edf.to_excel(writer, index=False, sheet_name='All Entries')
 
-        # Receipts
         rcv = edf[edf['Entry Type'].isin(['Receipt', 'Initial'])]
         rcv.to_excel(writer, index=False, sheet_name='Receipts')
 
-        # Consumption
         con = edf[edf['Entry Type'] == 'Consumption']
         con.to_excel(writer, index=False, sheet_name='Consumption')
 
-        # Summary sheet
         cur      = get_current_stock()
         tot_rcv  = df_all[
             df_all['Entry Type'].isin(['Receipt', 'Initial'])
@@ -400,19 +468,13 @@ def build_excel(df_all: pd.DataFrame) -> bytes:
 
 
 def build_consumption_report(df: pd.DataFrame) -> bytes:
-    """
-    Dedicated consumption report Excel with zone breakdown.
-    """
     buf = BytesIO()
     con_df = df[df['Entry Type'] == 'Consumption'].copy()
 
     with pd.ExcelWriter(buf, engine='openpyxl') as writer:
         edf = prepare_export_df(con_df)
-
-        # Consumption detail
         edf.to_excel(writer, index=False, sheet_name='Consumption Detail')
 
-        # Zone summary
         zone_rows = []
         for z in REPAIR_ZONES:
             mask = con_df['Remarks'].str.contains(z, case=False, na=False)
@@ -429,7 +491,6 @@ def build_consumption_report(df: pd.DataFrame) -> bytes:
             zdf = pd.DataFrame(zone_rows)
             zdf.to_excel(writer, index=False, sheet_name='Zone Breakdown')
 
-        # Monthly summary
         if len(con_df) > 0:
             con_df['Month'] = pd.to_datetime(con_df['Date']).dt.to_period('M').astype(str)
             monthly = (
@@ -448,9 +509,6 @@ def build_consumption_report(df: pd.DataFrame) -> bytes:
 
 
 def build_receipt_report(df: pd.DataFrame) -> bytes:
-    """
-    Dedicated receipt report Excel.
-    """
     buf = BytesIO()
     rcv_df = df[df['Entry Type'].isin(['Receipt', 'Initial'])].copy()
 
@@ -458,7 +516,6 @@ def build_receipt_report(df: pd.DataFrame) -> bytes:
         edf = prepare_export_df(rcv_df)
         edf.to_excel(writer, index=False, sheet_name='Receipt Detail')
 
-        # Monthly receipt summary
         if len(rcv_df) > 0:
             rcv_df['Month'] = pd.to_datetime(rcv_df['Date']).dt.to_period('M').astype(str)
             monthly = (
@@ -476,31 +533,15 @@ def build_receipt_report(df: pd.DataFrame) -> bytes:
 # ============================================================
 # DOWNLOAD WIDGET BUILDER
 # ============================================================
-def download_widget(
-    label: str,
-    data: bytes,
-    suggested_name: str,
-    mime: str,
-    file_ext: str,
-    help_text: str = ""
-):
-    """
-    Renders a filename input + download button pair.
-    The user can type their preferred filename before downloading.
-    The browser's native Save-As dialog will use this as the suggested name.
-    """
-    # Sanitise default name
+def download_widget(label, data, suggested_name, mime, file_ext, help_text=""):
     clean_default = suggested_name.replace(' ', '_')
-
     col_name, col_btn = st.columns([3, 1])
     with col_name:
         user_name = st.text_input(
             "📝 Save as filename:",
             value=clean_default,
             key="fname_" + label.replace(" ", "_") + file_ext,
-            help=(help_text or
-                  "Type your preferred filename. "
-                  "The browser Save-As dialog will use this name.")
+            help=help_text or "Type your preferred filename."
         )
         st.markdown(
             "<div class='filename-tip'>"
@@ -510,20 +551,15 @@ def download_widget(
             unsafe_allow_html=True
         )
 
-    # Ensure extension is present
-    final_name = user_name.strip()
-    if not final_name:
-        final_name = clean_default
+    final_name = user_name.strip() or clean_default
     if not final_name.endswith(file_ext):
-        final_name = final_name + file_ext
+        final_name += file_ext
 
     with col_btn:
         st.markdown("<div style='margin-top:28px;'>", unsafe_allow_html=True)
         st.download_button(
-            label=label,
-            data=data,
-            file_name=final_name,
-            mime=mime,
+            label=label, data=data,
+            file_name=final_name, mime=mime,
             use_container_width=True
         )
         st.markdown("</div>", unsafe_allow_html=True)
@@ -586,7 +622,7 @@ def make_receipt_row(entry_date, mt: float, remarks: str) -> pd.DataFrame:
         'Used for Sidewall Repair (Kg)':    0.0,
         'Closing Stock (Kg)':               round(cur + kg, 4),
         'Total Consumption Till Date (Kg)': get_total_consumption(),
-        'Remarks':                          remarks
+        'Remarks':                          remarks or ''
     }])
 
 
@@ -602,7 +638,7 @@ def make_consumption_row(entry_date, used_kg: float, remarks: str) -> pd.DataFra
         'Used for Sidewall Repair (Kg)':    used_kg,
         'Closing Stock (Kg)':               round(cur - used_kg, 4),
         'Total Consumption Till Date (Kg)': round(get_total_consumption() + used_kg, 4),
-        'Remarks':                          remarks
+        'Remarks':                          remarks or ''
     }])
 
 
@@ -617,7 +653,8 @@ def append_row(row: pd.DataFrame):
 # SESSION STATE
 # ============================================================
 if 'stock_data' not in st.session_state:
-    st.session_state.stock_data = load_data()
+    loaded = load_data()
+    st.session_state.stock_data = loaded
 if 'initial_stock_set' not in st.session_state:
     st.session_state.initial_stock_set = len(st.session_state.stock_data) > 0
 if 'low_thr' not in st.session_state:
@@ -657,11 +694,9 @@ with st.sidebar:
     ], label_visibility="collapsed")
 
     st.markdown("---")
-    
-    # Add Logout Button here!
     authenticator.logout('Log Out', 'sidebar')
     st.markdown(f"**Logged in as:** {st.session_state['name']}")
-    
+
     st.markdown("---")
     st.markdown("### ⚙️ Settings")
     st.session_state.low_thr = st.number_input(
@@ -1746,8 +1781,7 @@ def render_download_reports():
     st.header("💾 Download Reports")
     st.markdown(
         "<div class='section-header'>"
-        "📁 Choose your report, type a filename, then click Download. "
-        "Your browser will ask where to save the file."
+        "📁 Choose your report, type a filename, then click Download."
         "</div>",
         unsafe_allow_html=True
     )
@@ -1759,10 +1793,7 @@ def render_download_reports():
     df       = st.session_state.stock_data.copy()
     df['Date'] = pd.to_datetime(df['Date'])
     ts       = datetime.now().strftime('%Y%m%d_%H%M%S')
-    con_df   = df[df['Entry Type'] == 'Consumption']
-    rcv_df   = df[df['Entry Type'].isin(['Receipt', 'Initial'])]
 
-    # ── Date range filter (applies to all reports) ────────────────────
     st.markdown(
         "<div class='section-header'>🔍 Date Range Filter</div>",
         unsafe_allow_html=True
@@ -1775,10 +1806,7 @@ def render_download_reports():
         dmax  = df['Date'].max().date()
         dto   = st.date_input("To:",   value=dmax, key="rep_to")
 
-    df_filt = df[
-        (df['Date'].dt.date >= dfrom) &
-        (df['Date'].dt.date <= dto)
-    ]
+    df_filt  = df[(df['Date'].dt.date >= dfrom) & (df['Date'].dt.date <= dto)]
     con_filt = df_filt[df_filt['Entry Type'] == 'Consumption']
     rcv_filt = df_filt[df_filt['Entry Type'].isin(['Receipt', 'Initial'])]
 
@@ -1792,188 +1820,95 @@ def render_download_reports():
 
     st.markdown("---")
 
-    # ══════════════════════════════════════════════════════════════════
-    # REPORT 1 — Full Register (All Entries)
-    # ══════════════════════════════════════════════════════════════════
+    # Report 1
     st.markdown(
-        "<div class='download-card'>"
-        "<h3>📋 Report 1 — Full Stock Register</h3>"
-        "<p>All entries (Initial + Receipts + Consumption) with a Summary sheet. "
-        "Includes opening, closing, and cumulative consumption columns.</p>"
-        "</div>",
+        "<div class='download-card'><h3>📋 Report 1 — Full Stock Register</h3>"
+        "<p>All entries with a Summary sheet.</p></div>",
         unsafe_allow_html=True
     )
-    with st.expander("👁️ Preview — Full Register", expanded=False):
-        prev = prepare_export_df(df_filt)
-        st.dataframe(prev.head(10), use_container_width=True, hide_index=True)
-        if len(prev) > 10:
-            st.caption("Showing 10 of " + str(len(prev)) + " rows.")
-
+    with st.expander("👁️ Preview", expanded=False):
+        st.dataframe(prepare_export_df(df_filt).head(10),
+                     use_container_width=True, hide_index=True)
     c1, c2 = st.columns(2)
     with c1:
-        download_widget(
-            label="📥 Download Full Register (CSV)",
-            data=build_csv(prepare_export_df(df_filt)),
-            suggested_name="Full_Stock_Register_" + ts,
-            mime="text/csv",
-            file_ext=".csv",
-            help_text="CSV of all entries in the selected date range."
-        )
+        download_widget("📥 Download Full Register (CSV)",
+                        build_csv(prepare_export_df(df_filt)),
+                        "Full_Stock_Register_" + ts, "text/csv", ".csv")
     with c2:
-        try:
-            download_widget(
-                label="📥 Download Full Register (Excel)",
-                data=build_excel(df_filt),
-                suggested_name="Full_Stock_Register_" + ts,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                file_ext=".xlsx",
-                help_text="Excel with All Entries, Receipts, Consumption and Summary sheets."
-            )
-        except ImportError:
-            st.warning("Run `pip install openpyxl` for Excel export.")
+        download_widget("📥 Download Full Register (Excel)",
+                        build_excel(df_filt),
+                        "Full_Stock_Register_" + ts,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        ".xlsx")
 
     st.markdown("---")
 
-    # ══════════════════════════════════════════════════════════════════
-    # REPORT 2 — Consumption Report
-    # ══════════════════════════════════════════════════════════════════
+    # Report 2
     st.markdown(
-        "<div class='download-card'>"
-        "<h3>🔥 Report 2 — Consumption Report</h3>"
-        "<p>Consumption entries only, with Zone Breakdown and Monthly Summary sheets. "
-        "Ideal for tracking EAF sidewall repair material usage.</p>"
-        "</div>",
+        "<div class='download-card'><h3>🔥 Report 2 — Consumption Report</h3>"
+        "<p>Consumption entries with Zone Breakdown and Monthly Summary.</p></div>",
         unsafe_allow_html=True
     )
-
     if len(con_filt) == 0:
         st.info("No consumption entries in the selected date range.")
     else:
-        # Mini summary before download
         total_used = con_filt['Used for Sidewall Repair (Kg)'].sum()
         avg_used   = con_filt['Used for Sidewall Repair (Kg)'].mean()
         max_used   = con_filt['Used for Sidewall Repair (Kg)'].max()
         ks1, ks2, ks3, ks4 = st.columns(4)
-        ks1.markdown(
-            kpi("Entries", str(len(con_filt))),
-            unsafe_allow_html=True
-        )
-        ks2.markdown(
-            kpi("Total Used", f"{total_used:.0f} Kg", f"{kg2mt(total_used):.2f} MT"),
-            unsafe_allow_html=True
-        )
-        ks3.markdown(
-            kpi("Avg per Entry", f"{avg_used:.0f} Kg"),
-            unsafe_allow_html=True
-        )
-        ks4.markdown(
-            kpi("Max Single", f"{max_used:.0f} Kg"),
-            unsafe_allow_html=True
-        )
-
-        with st.expander("👁️ Preview — Consumption Entries", expanded=False):
-            prev_c = prepare_export_df(con_filt)
-            st.dataframe(prev_c.head(10), use_container_width=True, hide_index=True)
-            if len(prev_c) > 10:
-                st.caption("Showing 10 of " + str(len(prev_c)) + " rows.")
-
+        ks1.markdown(kpi("Entries", str(len(con_filt))), unsafe_allow_html=True)
+        ks2.markdown(kpi("Total Used", f"{total_used:.0f} Kg", f"{kg2mt(total_used):.2f} MT"), unsafe_allow_html=True)
+        ks3.markdown(kpi("Avg per Entry", f"{avg_used:.0f} Kg"), unsafe_allow_html=True)
+        ks4.markdown(kpi("Max Single", f"{max_used:.0f} Kg"), unsafe_allow_html=True)
         cc1, cc2 = st.columns(2)
         with cc1:
-            download_widget(
-                label="📥 Download Consumption (CSV)",
-                data=build_csv(prepare_export_df(con_filt)),
-                suggested_name="Consumption_Report_" + ts,
-                mime="text/csv",
-                file_ext=".csv",
-                help_text="CSV of consumption entries in the selected date range."
-            )
+            download_widget("📥 Download Consumption (CSV)",
+                            build_csv(prepare_export_df(con_filt)),
+                            "Consumption_Report_" + ts, "text/csv", ".csv")
         with cc2:
-            try:
-                download_widget(
-                    label="📥 Download Consumption (Excel)",
-                    data=build_consumption_report(df_filt),
-                    suggested_name="Consumption_Report_" + ts,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    file_ext=".xlsx",
-                    help_text="Excel with Consumption Detail, Zone Breakdown and Monthly Summary."
-                )
-            except ImportError:
-                st.warning("Run `pip install openpyxl` for Excel export.")
+            download_widget("📥 Download Consumption (Excel)",
+                            build_consumption_report(df_filt),
+                            "Consumption_Report_" + ts,
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            ".xlsx")
 
     st.markdown("---")
 
-    # ══════════════════════════════════════════════════════════════════
-    # REPORT 3 — Receipt Report
-    # ══════════════════════════════════════════════════════════════════
+    # Report 3
     st.markdown(
-        "<div class='download-card'>"
-        "<h3>📥 Report 3 — Receipt Report</h3>"
-        "<p>Stock receipt entries only, with Monthly Summary sheet. "
-        "Useful for reconciling store issues against GRN / challans.</p>"
-        "</div>",
+        "<div class='download-card'><h3>📥 Report 3 — Receipt Report</h3>"
+        "<p>Receipt entries with Monthly Summary.</p></div>",
         unsafe_allow_html=True
     )
-
     if len(rcv_filt) == 0:
         st.info("No receipt entries in the selected date range.")
     else:
         total_rcv_kg = rcv_filt['Received from Store (Kg)'].sum()
         total_rcv_mt = rcv_filt['Received from Store (MT)'].sum()
         rs1, rs2, rs3 = st.columns(3)
-        rs1.markdown(
-            kpi("Receipts", str(len(rcv_filt))),
-            unsafe_allow_html=True
-        )
-        rs2.markdown(
-            kpi("Total Received", f"{total_rcv_kg:.0f} Kg"),
-            unsafe_allow_html=True
-        )
-        rs3.markdown(
-            kpi("Total Received", f"{total_rcv_mt:.1f} MT"),
-            unsafe_allow_html=True
-        )
-
-        with st.expander("👁️ Preview — Receipt Entries", expanded=False):
-            prev_r = prepare_export_df(rcv_filt)
-            st.dataframe(prev_r.head(10), use_container_width=True, hide_index=True)
-
+        rs1.markdown(kpi("Receipts", str(len(rcv_filt))), unsafe_allow_html=True)
+        rs2.markdown(kpi("Total Received", f"{total_rcv_kg:.0f} Kg"), unsafe_allow_html=True)
+        rs3.markdown(kpi("Total Received", f"{total_rcv_mt:.1f} MT"), unsafe_allow_html=True)
         rc1, rc2 = st.columns(2)
         with rc1:
-            download_widget(
-                label="📥 Download Receipts (CSV)",
-                data=build_csv(prepare_export_df(rcv_filt)),
-                suggested_name="Receipt_Report_" + ts,
-                mime="text/csv",
-                file_ext=".csv",
-                help_text="CSV of receipt entries in the selected date range."
-            )
+            download_widget("📥 Download Receipts (CSV)",
+                            build_csv(prepare_export_df(rcv_filt)),
+                            "Receipt_Report_" + ts, "text/csv", ".csv")
         with rc2:
-            try:
-                download_widget(
-                    label="📥 Download Receipts (Excel)",
-                    data=build_receipt_report(df_filt),
-                    suggested_name="Receipt_Report_" + ts,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    file_ext=".xlsx",
-                    help_text="Excel with Receipt Detail and Monthly Summary sheets."
-                )
-            except ImportError:
-                st.warning("Run `pip install openpyxl` for Excel export.")
+            download_widget("📥 Download Receipts (Excel)",
+                            build_receipt_report(df_filt),
+                            "Receipt_Report_" + ts,
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            ".xlsx")
 
     st.markdown("---")
 
-    # ══════════════════════════════════════════════════════════════════
-    # REPORT 4 — Monthly Summary
-    # ══════════════════════════════════════════════════════════════════
+    # Report 4
     st.markdown(
-        "<div class='download-card'>"
-        "<h3>📅 Report 4 — Monthly Summary</h3>"
-        "<p>Month-wise aggregation of receipts and consumption. "
-        "Great for management reporting.</p>"
-        "</div>",
+        "<div class='download-card'><h3>📅 Report 4 — Monthly Summary</h3>"
+        "<p>Month-wise aggregation of receipts and consumption.</p></div>",
         unsafe_allow_html=True
     )
-
     df_filt2 = df_filt.copy()
     df_filt2['Month'] = df_filt2['Date'].dt.to_period('M').astype(str)
 
@@ -1983,13 +1918,9 @@ def render_download_reports():
         .agg(['sum', 'count', 'mean', 'max'])
         .reset_index()
     )
-    con_monthly.columns = [
-        'Month', 'Total Consumed (Kg)',
-        'No. of Entries', 'Avg per Entry (Kg)', 'Max Single (Kg)'
-    ]
-    con_monthly['Total Consumed (MT)'] = (
-        con_monthly['Total Consumed (Kg)'] / 1000
-    ).round(3)
+    con_monthly.columns = ['Month', 'Total Consumed (Kg)', 'No. of Entries',
+                            'Avg per Entry (Kg)', 'Max Single (Kg)']
+    con_monthly['Total Consumed (MT)'] = (con_monthly['Total Consumed (Kg)'] / 1000).round(3)
     con_monthly = con_monthly.round(2)
 
     rcv_monthly = (
@@ -1999,9 +1930,7 @@ def render_download_reports():
         .reset_index()
     )
     rcv_monthly.columns = ['Month', 'Total Received (Kg)', 'No. of Receipts']
-    rcv_monthly['Total Received (MT)'] = (
-        rcv_monthly['Total Received (Kg)'] / 1000
-    ).round(3)
+    rcv_monthly['Total Received (MT)'] = (rcv_monthly['Total Received (Kg)'] / 1000).round(3)
 
     if len(con_monthly) > 0 or len(rcv_monthly) > 0:
         with st.expander("👁️ Preview — Monthly Summary", expanded=False):
@@ -2010,45 +1939,26 @@ def render_download_reports():
             st.markdown("**Receipts by Month:**")
             st.dataframe(rcv_monthly, use_container_width=True, hide_index=True)
 
-        # Build monthly Excel
         def build_monthly_excel() -> bytes:
             buf2 = BytesIO()
             with pd.ExcelWriter(buf2, engine='openpyxl') as writer:
                 if len(con_monthly) > 0:
-                    con_monthly.to_excel(
-                        writer, index=False,
-                        sheet_name='Monthly Consumption'
-                    )
+                    con_monthly.to_excel(writer, index=False, sheet_name='Monthly Consumption')
                 if len(rcv_monthly) > 0:
-                    rcv_monthly.to_excel(
-                        writer, index=False,
-                        sheet_name='Monthly Receipts'
-                    )
+                    rcv_monthly.to_excel(writer, index=False, sheet_name='Monthly Receipts')
             return buf2.getvalue()
 
-        # Monthly CSV (consumption)
         mc1, mc2 = st.columns(2)
         with mc1:
-            download_widget(
-                label="📥 Download Monthly CSV",
-                data=build_csv(con_monthly),
-                suggested_name="Monthly_Consumption_Summary_" + ts,
-                mime="text/csv",
-                file_ext=".csv",
-                help_text="CSV of monthly consumption totals."
-            )
+            download_widget("📥 Download Monthly CSV",
+                            build_csv(con_monthly),
+                            "Monthly_Consumption_Summary_" + ts, "text/csv", ".csv")
         with mc2:
-            try:
-                download_widget(
-                    label="📥 Download Monthly Excel",
-                    data=build_monthly_excel(),
-                    suggested_name="Monthly_Summary_" + ts,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    file_ext=".xlsx",
-                    help_text="Excel with Monthly Consumption and Monthly Receipts sheets."
-                )
-            except ImportError:
-                st.warning("Run `pip install openpyxl` for Excel export.")
+            download_widget("📥 Download Monthly Excel",
+                            build_monthly_excel(),
+                            "Monthly_Summary_" + ts,
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            ".xlsx")
     else:
         st.info("No data available for monthly summary in the selected range.")
 
@@ -2073,11 +1983,7 @@ def render_import():
                 st.error("❌ Missing columns: " + str(missing))
             else:
                 st.success("✅ File structure validated!")
-                st.dataframe(
-                    imp_df.head(5),
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.dataframe(imp_df.head(5), use_container_width=True, hide_index=True)
                 st.info("**" + str(len(imp_df)) + " records** found in file.")
                 if st.button(
                     "🔄 Import & Replace Data",
@@ -2117,9 +2023,7 @@ st.markdown(
     "<div style='text-align:center;color:#aaa;font-size:12px;padding:6px 0;'>"
     "🏭 Gunning Mass Stock Management System &nbsp;|&nbsp; "
     "EAF Sidewall Repair &nbsp;|&nbsp; "
-    "Data saved to <code>" + DATA_FILE + "</code>"
+    "Data saved to <code>Google Sheets (StockData tab)</code>"
     "</div>",
     unsafe_allow_html=True
 )
-
-
