@@ -51,313 +51,156 @@ except FileNotFoundError:
     st.error("🚨 Missing 'config.yaml' file. Please create it to enable login.")
     st.stop()
 
-# ── Login page: only shown when not yet authenticated ─────────────────────────
+# ── Login page CSS (injected before auth widget renders) ──────────────────────
+st.markdown("""
+<style>
+/* ── Full-page login background ── */
+[data-testid="stAppViewContainer"]:has(section[data-testid="stMain"] div[data-testid="stForm"]) {
+    background: linear-gradient(135deg, #0f3460 0%, #16213e 50%, #1a1a2e 100%) !important;
+    min-height: 100vh;
+}
+[data-testid="stAppViewContainer"]:has(section[data-testid="stMain"] div[data-testid="stForm"])
+    [data-testid="stMain"] {
+    background: transparent !important;
+}
+
+/* ── Floating card around the form ── */
+div[data-testid="stForm"] {
+    background: rgba(255,255,255,0.97) !important;
+    border-radius: 20px !important;
+    padding: 36px 32px 28px 32px !important;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.45) !important;
+    max-width: 420px;
+    margin: 0 auto;
+}
+
+/* ── Input fields ── */
+div[data-testid="stForm"] input {
+    border-radius: 10px !important;
+    border: 1.5px solid #dde1ee !important;
+    background: #f8f9ff !important;
+    font-size: 15px !important;
+    padding: 10px 14px !important;
+    transition: border-color .2s;
+}
+div[data-testid="stForm"] input:focus {
+    border-color: #0f3460 !important;
+    background: #fff !important;
+    box-shadow: 0 0 0 3px rgba(15,52,96,.12) !important;
+}
+
+/* ── Login submit button ── */
+div[data-testid="stForm"] button[kind="primaryFormSubmit"],
+div[data-testid="stForm"] button[data-testid="baseButton-primaryFormSubmit"] {
+    background: linear-gradient(135deg, #0f3460, #16213e) !important;
+    color: white !important;
+    border-radius: 10px !important;
+    font-weight: 700 !important;
+    font-size: 15px !important;
+    letter-spacing: .5px !important;
+    border: none !important;
+    width: 100% !important;
+    padding: 12px !important;
+    margin-top: 6px !important;
+    box-shadow: 0 4px 14px rgba(15,52,96,.35) !important;
+    transition: opacity .2s !important;
+}
+div[data-testid="stForm"] button:hover {
+    opacity: 0.88 !important;
+}
+
+/* ── Label text ── */
+div[data-testid="stForm"] label p {
+    font-weight: 600 !important;
+    color: #1a1a2e !important;
+    font-size: 13px !important;
+    letter-spacing: .3px;
+}
+
+/* ── Hide default Streamlit header/footer on login page ── */
+header[data-testid="stHeader"] { background: transparent !important; }
+#MainMenu, footer { visibility: hidden; }
+</style>
+""", unsafe_allow_html=True)
+
+# ── Login page hero (only shown when not authenticated) ──────────────────────
 if not st.session_state.get("authentication_status"):
-
-    # ── CSS: background + strip all default Streamlit chrome ──
-    st.markdown("""
-    <style>
-    [data-testid="stAppViewContainer"] {
-        background: linear-gradient(135deg, #0a1628 0%, #0f3460 50%, #16213e 100%) !important;
-        min-height: 100vh;
-    }
-    [data-testid="stMain"],
-    [data-testid="stMainBlockContainer"],
-    section[data-testid="stMain"] > div { background: transparent !important; }
-    [data-testid="block-container"] {
-        padding: 0 !important;
-        max-width: 100% !important;
-    }
-    header[data-testid="stHeader"] {
-        background: transparent !important;
-        box-shadow: none !important;
-    }
-    #MainMenu, footer { visibility: hidden; }
-
-    /* ── Remove column gap / padding so layout fills edge-to-edge ── */
-    [data-testid="stHorizontalBlock"] {
-        gap: 0 !important;
-        align-items: center !important;
-        min-height: 100vh !important;
-    }
-    [data-testid="stHorizontalBlock"] > div:first-child {
-        padding: 0 !important;
-    }
-    [data-testid="stHorizontalBlock"] > div:last-child {
-        padding: 0 32px 0 0 !important;
-        display: flex !important;
-        flex-direction: column !important;
-        align-items: flex-end !important;
-        justify-content: flex-start !important;
-        padding-top: 32px !important;
-    }
-
-    /* ── Login form card ── */
-    div[data-testid="stForm"] {
-        background: white !important;
-        border-radius: 20px !important;
-        padding: 32px 28px 24px !important;
-        box-shadow: 0 24px 64px rgba(0,0,0,0.5) !important;
-        border-top: 5px solid #e8a020 !important;
-        width: 340px !important;
-        min-width: 340px !important;
-    }
-
-    /* hide the default "Login" h2 that streamlit-authenticator injects */
-    div[data-testid="stForm"] h2 {
-        display: none !important;
-    }
-
-    /* ── Inputs ── */
-    div[data-testid="stForm"] input {
-        border-radius: 10px !important;
-        border: 1.5px solid #e0e4f0 !important;
-        background: #f7f9ff !important;
-        font-size: 14px !important;
-        padding: 10px 14px !important;
-        transition: all .2s !important;
-        width: 100% !important;
-    }
-    div[data-testid="stForm"] input:focus {
-        border-color: #0f3460 !important;
-        background: white !important;
-        box-shadow: 0 0 0 3px rgba(15,52,96,0.1) !important;
-        outline: none !important;
-    }
-
-    /* ── Labels ── */
-    div[data-testid="stForm"] label p {
-        font-weight: 700 !important;
-        color: #2c3e60 !important;
-        font-size: 12.5px !important;
-        text-transform: uppercase !important;
-        letter-spacing: .6px !important;
-        margin-bottom: 4px !important;
-    }
-
-    /* ── Login submit button ── */
-    div[data-testid="stForm"] button {
-        background: linear-gradient(135deg, #e8a020, #c97d10) !important;
-        color: white !important;
-        border-radius: 10px !important;
-        font-weight: 700 !important;
-        font-size: 14.5px !important;
-        letter-spacing: .5px !important;
-        border: none !important;
-        width: 100% !important;
-        padding: 12px !important;
-        margin-top: 8px !important;
-        box-shadow: 0 4px 18px rgba(232,160,32,0.45) !important;
-        cursor: pointer !important;
-        transition: transform .15s, opacity .2s !important;
-    }
-    div[data-testid="stForm"] button:hover {
-        transform: translateY(-1px) !important;
-        opacity: .92 !important;
-    }
-
-    /* ── Remember me checkbox (sits below the form card) ── */
-    [data-testid="stCheckbox"] {
-        background: rgba(255,255,255,0.08) !important;
-        border-radius: 10px !important;
-        padding: 8px 14px !important;
-        width: 340px !important;
-        margin-top: 8px !important;
-    }
-    [data-testid="stCheckbox"] label p,
-    [data-testid="stCheckbox"] span {
-        color: rgba(255,255,255,0.8) !important;
-        font-size: 13px !important;
-        font-weight: 500 !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # ── Two-column layout: hero (left 62%) | login panel (right 38%) ──
-    hero_col, login_col = st.columns([62, 38])
-
-    # LEFT: full hero
+    _, hero_col, _ = st.columns([1, 2, 1])
     with hero_col:
         st.markdown("""
-        <div style="
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            padding: 40px 60px 40px 80px;
-            text-align: center;
-        ">
-            <!-- Decorative rings -->
-            <div style="position:relative; margin-bottom: 32px;">
-                <div style="
-                    position: absolute;
-                    width: 220px; height: 220px;
-                    border-radius: 50%;
-                    border: 1px solid rgba(255,255,255,0.08);
-                    top: 50%; left: 50%;
-                    transform: translate(-50%,-50%);
-                "></div>
-                <div style="
-                    position: absolute;
-                    width: 160px; height: 160px;
-                    border-radius: 50%;
-                    border: 1px solid rgba(255,255,255,0.12);
-                    top: 50%; left: 50%;
-                    transform: translate(-50%,-50%);
-                "></div>
-                <!-- Icon -->
-                <div style="
-                    width: 100px; height: 100px;
-                    background: linear-gradient(135deg, #e8a020, #c97d10);
-                    border-radius: 26px;
-                    display: flex; align-items: center; justify-content: center;
-                    font-size: 48px;
-                    box-shadow: 0 0 70px rgba(232,160,32,0.4), 0 8px 32px rgba(0,0,0,0.4);
-                    position: relative; z-index: 2;
-                ">🏭</div>
-            </div>
-
-            <h1 style="
-                color: white;
-                font-size: 2.8rem;
-                font-weight: 900;
-                margin: 0 0 12px 0;
-                letter-spacing: 1px;
-                line-height: 1.15;
-                text-shadow: 0 2px 24px rgba(0,0,0,0.35);
-            ">Gunning Mass<br>Stock Register</h1>
-
-            <p style="
-                color: rgba(255,255,255,0.55);
-                font-size: 1rem;
-                margin: 0 0 44px 0;
-                letter-spacing: .6px;
-            ">EAF Sidewall Repair &nbsp;·&nbsp; Stock Management System</p>
-
-            <!-- Feature pills -->
-            <div style="display:flex; flex-direction:column; gap:12px; width:100%; max-width:380px;">
-                <div style="
-                    background: rgba(255,255,255,0.07);
-                    border: 1px solid rgba(255,255,255,0.14);
-                    border-radius: 14px;
-                    padding: 14px 20px;
-                    display: flex; align-items: center; gap: 14px;
-                ">
-                    <span style="font-size:24px;">📦</span>
-                    <div style="text-align:left;">
-                        <div style="color:white; font-weight:700; font-size:14px;">Real-time Stock Tracking</div>
-                        <div style="color:rgba(255,255,255,0.45); font-size:12px; margin-top:2px;">Monitor receipts and consumption live</div>
-                    </div>
-                </div>
-                <div style="
-                    background: rgba(255,255,255,0.07);
-                    border: 1px solid rgba(255,255,255,0.14);
-                    border-radius: 14px;
-                    padding: 14px 20px;
-                    display: flex; align-items: center; gap: 14px;
-                ">
-                    <span style="font-size:24px;">📊</span>
-                    <div style="text-align:left;">
-                        <div style="color:white; font-weight:700; font-size:14px;">Analytics &amp; Reports</div>
-                        <div style="color:rgba(255,255,255,0.45); font-size:12px; margin-top:2px;">Charts, trends and exportable PDF/CSV</div>
-                    </div>
-                </div>
-                <div style="
-                    background: rgba(255,255,255,0.07);
-                    border: 1px solid rgba(255,255,255,0.14);
-                    border-radius: 14px;
-                    padding: 14px 20px;
-                    display: flex; align-items: center; gap: 14px;
-                ">
-                    <span style="font-size:24px;">☁️</span>
-                    <div style="text-align:left;">
-                        <div style="color:white; font-weight:700; font-size:14px;">Cloud Sync</div>
-                        <div style="color:rgba(255,255,255,0.45); font-size:12px; margin-top:2px;">Data persisted via Google Sheets</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Footer -->
-            <p style="
-                color: rgba(255,255,255,0.2);
-                font-size: 11px;
-                margin-top: 52px;
-                letter-spacing: .5px;
-            ">© 2025 Gunning Mass Stock Management &nbsp;·&nbsp; EAF Operations</p>
+        <div style="text-align:center; padding: 48px 0 24px 0;">
+            <div style="font-size: 64px; margin-bottom: 10px;">🏭</div>
+            <h1 style="color: white; font-size: 1.8rem; font-weight: 800;
+                       margin: 0 0 6px 0; letter-spacing: 1px;">
+                Gunning Mass Stock
+            </h1>
+            <p style="color: rgba(255,255,255,0.65); font-size: 1rem; margin: 0 0 32px 0;">
+                EAF Sidewall Repair · Stock Management System
+            </p>
         </div>
         """, unsafe_allow_html=True)
 
-    # RIGHT: login form + remember me
-    with login_col:
-        # Custom heading above the Streamlit form
-        st.markdown("""
-        <div style="
-            width: 340px;
-            padding: 0 0 16px 0;
-        ">
-            <div style="
-                background: white;
-                border-radius: 20px 20px 0 0;
-                padding: 28px 28px 4px 28px;
-                border-top: 5px solid #e8a020;
-                box-shadow: 0 -4px 24px rgba(0,0,0,0.15);
-            ">
-                <div style="font-size:28px; margin-bottom:6px;">👤</div>
-                <h2 style="
-                    color: #0f3460;
-                    font-size: 1.4rem;
-                    font-weight: 800;
-                    margin: 0 0 4px 0;
-                ">Welcome back</h2>
-                <p style="color:#888; font-size:13px; margin:0 0 0 0;">
-                    Sign in to access the register
-                </p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Remember me BEFORE authenticator (sets expiry_days)
+# ── Remember Me toggle ────────────────────────────────────────────────────────
+# We render this BEFORE the login form so it can influence expiry_days
+if not st.session_state.get("authentication_status"):
+    _, rm_col, _ = st.columns([1, 2, 1])
+    with rm_col:
         remember_me = st.checkbox(
             "🔒 Remember me for 30 days",
             value=st.session_state.get("remember_me_pref", False),
             key="remember_me_checkbox"
         )
         st.session_state["remember_me_pref"] = remember_me
+else:
+    remember_me = st.session_state.get("remember_me_pref", False)
 
-        expiry_days = 30 if remember_me else 1
-        authenticator = stauth.Authenticate(
-            config['credentials'],
-            config['cookie']['name'],
-            config['cookie']['key'],
-            expiry_days
-        )
-        try:
-            authenticator.login()
-        except Exception as e:
-            st.error(str(e))
+# Set cookie expiry based on Remember Me
+expiry_days = 30 if remember_me else 1
 
-        # Error message
-        if st.session_state["authentication_status"] is False:
-            st.markdown("""
-            <div style="
-                background:#ffe8e8; border-left:4px solid #e53935;
-                border-radius:10px; padding:10px 14px; margin-top:8px;
-                color:#b71c1c; font-weight:600; font-size:13px;
-            ">❌ Incorrect username or password.</div>
-            """, unsafe_allow_html=True)
-
-    st.stop()
-
-# ── Authenticated: build authenticator object for logout use ─────────────────
-remember_me  = st.session_state.get("remember_me_pref", False)
-expiry_days  = 30 if remember_me else 1
 authenticator = stauth.Authenticate(
     config['credentials'],
     config['cookie']['name'],
     config['cookie']['key'],
     expiry_days
 )
+
+# ── Render the login widget inside a centred column ───────────────────────────
+if not st.session_state.get("authentication_status"):
+    _, login_col, _ = st.columns([1, 2, 1])
+    with login_col:
+        try:
+            authenticator.login()
+        except Exception as e:
+            st.error(str(e))
+else:
+    try:
+        authenticator.login()
+    except Exception:
+        pass
+
+# ── Handle auth outcomes ──────────────────────────────────────────────────────
+if st.session_state["authentication_status"] is False:
+    _, err_col, _ = st.columns([1, 2, 1])
+    with err_col:
+        st.markdown("""
+        <div style="background:#ffe0e0; border-left:4px solid #e53935;
+                    border-radius:10px; padding:12px 16px; margin-top:8px;
+                    color:#b71c1c; font-weight:600; font-size:14px;">
+            ❌ Incorrect username or password. Please try again.
+        </div>
+        """, unsafe_allow_html=True)
+    st.stop()
+elif st.session_state["authentication_status"] is None:
+    _, hint_col, _ = st.columns([1, 2, 1])
+    with hint_col:
+        st.markdown("""
+        <div style="background:rgba(255,255,255,0.12); border-radius:10px;
+                    padding:10px 16px; margin-top:4px; text-align:center;
+                    color:rgba(255,255,255,0.7); font-size:13px;">
+            Enter your credentials above to continue
+        </div>
+        """, unsafe_allow_html=True)
+    st.stop()
 
 
 # ============================================================
