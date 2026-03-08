@@ -6,3 +6,7 @@ streamlit-authenticator
 openpyxl==3.1.5
 PyYAML
 st-gsheets-connection
+gspread
+google-auth
+reportlab
+kaleido
