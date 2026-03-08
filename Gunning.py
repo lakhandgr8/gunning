@@ -2548,17 +2548,9 @@ def render_download_reports():
     with st.expander("👁️ Preview", expanded=False):
         st.dataframe(prepare_export_df(df_filt).head(10),
                      width='stretch', hide_index=True)
-    c1, c2 = st.columns(2)
-    with c1:
-        download_widget("📥 Download Full Register (CSV)",
-                        build_csv(prepare_export_df(df_filt)),
-                        "Full_Stock_Register_" + ts, "text/csv", ".csv")
-    with c2:
-        download_widget("📥 Download Full Register (Excel)",
-                        build_excel(df_filt),
-                        "Full_Stock_Register_" + ts,
-                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        ".xlsx")
+    download_widget("📥 Download Full Register (CSV)",
+                    build_csv(prepare_export_df(df_filt)),
+                    "Full_Stock_Register_" + ts, "text/csv", ".csv")
 
     st.markdown("---")
 
@@ -2579,17 +2571,9 @@ def render_download_reports():
         ks2.markdown(kpi("Total Used", f"{total_used:.0f} Kg", f"{kg2mt(total_used):.2f} MT"), unsafe_allow_html=True)
         ks3.markdown(kpi("Avg per Entry", f"{avg_used:.0f} Kg"), unsafe_allow_html=True)
         ks4.markdown(kpi("Max Single", f"{max_used:.0f} Kg"), unsafe_allow_html=True)
-        cc1, cc2 = st.columns(2)
-        with cc1:
-            download_widget("📥 Download Consumption (CSV)",
-                            build_csv(prepare_export_df(con_filt)),
-                            "Consumption_Report_" + ts, "text/csv", ".csv")
-        with cc2:
-            download_widget("📥 Download Consumption (Excel)",
-                            build_consumption_report(df_filt),
-                            "Consumption_Report_" + ts,
-                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            ".xlsx")
+        download_widget("📥 Download Consumption (CSV)",
+                        build_csv(prepare_export_df(con_filt)),
+                        "Consumption_Report_" + ts, "text/csv", ".csv")
 
     st.markdown("---")
 
@@ -2608,17 +2592,9 @@ def render_download_reports():
         rs1.markdown(kpi("Receipts", str(len(rcv_filt))), unsafe_allow_html=True)
         rs2.markdown(kpi("Total Received", f"{total_rcv_kg:.0f} Kg"), unsafe_allow_html=True)
         rs3.markdown(kpi("Total Received", f"{total_rcv_mt:.1f} MT"), unsafe_allow_html=True)
-        rc1, rc2 = st.columns(2)
-        with rc1:
-            download_widget("📥 Download Receipts (CSV)",
-                            build_csv(prepare_export_df(rcv_filt)),
-                            "Receipt_Report_" + ts, "text/csv", ".csv")
-        with rc2:
-            download_widget("📥 Download Receipts (Excel)",
-                            build_receipt_report(df_filt),
-                            "Receipt_Report_" + ts,
-                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            ".xlsx")
+        download_widget("📥 Download Receipts (CSV)",
+                        build_csv(prepare_export_df(rcv_filt)),
+                        "Receipt_Report_" + ts, "text/csv", ".csv")
 
     st.markdown("---")
 
@@ -2669,15 +2645,13 @@ def render_download_reports():
 
         mc1, mc2 = st.columns(2)
         with mc1:
-            download_widget("📥 Download Monthly CSV",
+            download_widget("📥 Download Monthly Consumption (CSV)",
                             build_csv(con_monthly),
                             "Monthly_Consumption_Summary_" + ts, "text/csv", ".csv")
         with mc2:
-            download_widget("📥 Download Monthly Excel",
-                            build_monthly_excel(),
-                            "Monthly_Summary_" + ts,
-                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            ".xlsx")
+            download_widget("📥 Download Monthly Receipts (CSV)",
+                            build_csv(rcv_monthly),
+                            "Monthly_Receipts_Summary_" + ts, "text/csv", ".csv")
     else:
         st.info("No data available for monthly summary in the selected range.")
 
