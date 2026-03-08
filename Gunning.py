@@ -51,23 +51,155 @@ except FileNotFoundError:
     st.error("🚨 Missing 'config.yaml' file. Please create it to enable login.")
     st.stop()
 
+# ── Login page CSS (injected before auth widget renders) ──────────────────────
+st.markdown("""
+<style>
+/* ── Full-page login background ── */
+[data-testid="stAppViewContainer"]:has(section[data-testid="stMain"] div[data-testid="stForm"]) {
+    background: linear-gradient(135deg, #0f3460 0%, #16213e 50%, #1a1a2e 100%) !important;
+    min-height: 100vh;
+}
+[data-testid="stAppViewContainer"]:has(section[data-testid="stMain"] div[data-testid="stForm"])
+    [data-testid="stMain"] {
+    background: transparent !important;
+}
+
+/* ── Floating card around the form ── */
+div[data-testid="stForm"] {
+    background: rgba(255,255,255,0.97) !important;
+    border-radius: 20px !important;
+    padding: 36px 32px 28px 32px !important;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.45) !important;
+    max-width: 420px;
+    margin: 0 auto;
+}
+
+/* ── Input fields ── */
+div[data-testid="stForm"] input {
+    border-radius: 10px !important;
+    border: 1.5px solid #dde1ee !important;
+    background: #f8f9ff !important;
+    font-size: 15px !important;
+    padding: 10px 14px !important;
+    transition: border-color .2s;
+}
+div[data-testid="stForm"] input:focus {
+    border-color: #0f3460 !important;
+    background: #fff !important;
+    box-shadow: 0 0 0 3px rgba(15,52,96,.12) !important;
+}
+
+/* ── Login submit button ── */
+div[data-testid="stForm"] button[kind="primaryFormSubmit"],
+div[data-testid="stForm"] button[data-testid="baseButton-primaryFormSubmit"] {
+    background: linear-gradient(135deg, #0f3460, #16213e) !important;
+    color: white !important;
+    border-radius: 10px !important;
+    font-weight: 700 !important;
+    font-size: 15px !important;
+    letter-spacing: .5px !important;
+    border: none !important;
+    width: 100% !important;
+    padding: 12px !important;
+    margin-top: 6px !important;
+    box-shadow: 0 4px 14px rgba(15,52,96,.35) !important;
+    transition: opacity .2s !important;
+}
+div[data-testid="stForm"] button:hover {
+    opacity: 0.88 !important;
+}
+
+/* ── Label text ── */
+div[data-testid="stForm"] label p {
+    font-weight: 600 !important;
+    color: #1a1a2e !important;
+    font-size: 13px !important;
+    letter-spacing: .3px;
+}
+
+/* ── Hide default Streamlit header/footer on login page ── */
+header[data-testid="stHeader"] { background: transparent !important; }
+#MainMenu, footer { visibility: hidden; }
+</style>
+""", unsafe_allow_html=True)
+
+# ── Login page hero (only shown when not authenticated) ──────────────────────
+if not st.session_state.get("authentication_status"):
+    _, hero_col, _ = st.columns([1, 2, 1])
+    with hero_col:
+        st.markdown("""
+        <div style="text-align:center; padding: 48px 0 24px 0;">
+            <div style="font-size: 64px; margin-bottom: 10px;">🏭</div>
+            <h1 style="color: white; font-size: 1.8rem; font-weight: 800;
+                       margin: 0 0 6px 0; letter-spacing: 1px;">
+                Gunning Mass Stock
+            </h1>
+            <p style="color: rgba(255,255,255,0.65); font-size: 1rem; margin: 0 0 32px 0;">
+                EAF Sidewall Repair · Stock Management System
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+# ── Remember Me toggle ────────────────────────────────────────────────────────
+# We render this BEFORE the login form so it can influence expiry_days
+if not st.session_state.get("authentication_status"):
+    _, rm_col, _ = st.columns([1, 2, 1])
+    with rm_col:
+        remember_me = st.checkbox(
+            "🔒 Remember me for 30 days",
+            value=st.session_state.get("remember_me_pref", False),
+            key="remember_me_checkbox"
+        )
+        st.session_state["remember_me_pref"] = remember_me
+else:
+    remember_me = st.session_state.get("remember_me_pref", False)
+
+# Set cookie expiry based on Remember Me
+expiry_days = 30 if remember_me else 1
+
 authenticator = stauth.Authenticate(
     config['credentials'],
     config['cookie']['name'],
     config['cookie']['key'],
-    config['cookie']['expiry_days']
+    expiry_days
 )
 
-try:
-    authenticator.login()
-except Exception as e:
-    st.error(e)
+# ── Render the login widget inside a centred column ───────────────────────────
+if not st.session_state.get("authentication_status"):
+    _, login_col, _ = st.columns([1, 2, 1])
+    with login_col:
+        try:
+            authenticator.login()
+        except Exception as e:
+            st.error(str(e))
+else:
+    try:
+        authenticator.login()
+    except Exception:
+        pass
 
+# ── Handle auth outcomes ──────────────────────────────────────────────────────
 if st.session_state["authentication_status"] is False:
-    st.error('Username/password is incorrect')
+    _, err_col, _ = st.columns([1, 2, 1])
+    with err_col:
+        st.markdown("""
+        <div style="background:#ffe0e0; border-left:4px solid #e53935;
+                    border-radius:10px; padding:12px 16px; margin-top:8px;
+                    color:#b71c1c; font-weight:600; font-size:14px;">
+            ❌ Incorrect username or password. Please try again.
+        </div>
+        """, unsafe_allow_html=True)
     st.stop()
 elif st.session_state["authentication_status"] is None:
-    st.warning('Please enter your username and password to access the register.')
+    _, hint_col, _ = st.columns([1, 2, 1])
+    with hint_col:
+        st.markdown("""
+        <div style="background:rgba(255,255,255,0.12); border-radius:10px;
+                    padding:10px 16px; margin-top:4px; text-align:center;
+                    color:rgba(255,255,255,0.7); font-size:13px;">
+            Enter your credentials above to continue
+        </div>
+        """, unsafe_allow_html=True)
     st.stop()
 
 
