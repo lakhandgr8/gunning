@@ -560,7 +560,7 @@ def download_widget(label, data, suggested_name, mime, file_ext, help_text=""):
         st.download_button(
             label=label, data=data,
             file_name=final_name, mime=mime,
-            use_container_width=True
+            width='stretch'
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -682,7 +682,7 @@ st.markdown(
 # ============================================================
 with st.sidebar:
     st.markdown("## 📋 Navigation")
-    action = st.radio("", [
+    action = st.radio("Navigation", [
         "🏠 Dashboard",
         "📥 Receive Stock",
         "🔥 Log Consumption",
@@ -751,7 +751,7 @@ def render_initial_setup():
             placeholder="e.g. Carry forward from previous period"
         )
         ok = st.form_submit_button(
-            "✅ Set Initial Stock", type="primary", use_container_width=True
+            "✅ Set Initial Stock", type="primary", width='stretch'
         )
 
     if ok:
@@ -851,7 +851,7 @@ def render_dashboard():
                 rd[['Date', 'Received from Store (MT)',
                     'Received from Store (Kg)',
                     'Closing Stock (Kg)', 'Remarks']],
-                use_container_width=True, hide_index=True
+                width='stretch', hide_index=True
             )
         else:
             st.info("No receipts yet.")
@@ -868,7 +868,7 @@ def render_dashboard():
                 cd[['Date', 'Used for Sidewall Repair (Kg)',
                     'Closing Stock (Kg)',
                     'Total Consumption Till Date (Kg)', 'Remarks']],
-                use_container_width=True, hide_index=True
+                width='stretch', hide_index=True
             )
         else:
             st.info("No consumption yet.")
@@ -967,7 +967,7 @@ def render_receive():
         p4.success("**= MT**\n\n" + f"{kg2mt(new_close):.3f} MT")
 
         sub = st.form_submit_button(
-            "✅ Record Receipt", type="primary", use_container_width=True
+            "✅ Record Receipt", type="primary", width='stretch'
         )
 
     if sub:
@@ -1061,7 +1061,7 @@ def render_consumption():
         p4.info("**Total Consumed**\n\n" + f"{new_tot:.2f} Kg")
 
         sub = st.form_submit_button(
-            "✅ Record Consumption", type="primary", use_container_width=True
+            "✅ Record Consumption", type="primary", width='stretch'
         )
 
     if sub:
@@ -1097,7 +1097,7 @@ def render_register_table(rows_df: pd.DataFrame, key_prefix: str):
                 "🗑️ Delete Selected",
                 key=key_prefix + "_bulk_del",
                 type="primary",
-                use_container_width=True
+                width='stretch'
             ):
                 st.session_state.pending_del = list(st.session_state.selected_ids)
                 st.rerun()
@@ -1105,7 +1105,7 @@ def render_register_table(rows_df: pd.DataFrame, key_prefix: str):
             if st.button(
                 "✖ Clear",
                 key=key_prefix + "_clear",
-                use_container_width=True
+                width='stretch'
             ):
                 st.session_state.selected_ids = set()
                 st.rerun()
@@ -1126,7 +1126,7 @@ def render_register_table(rows_df: pd.DataFrame, key_prefix: str):
                 "✅ Confirm Delete",
                 key=key_prefix + "_confirm",
                 type="primary",
-                use_container_width=True
+                width='stretch'
             ):
                 ids = st.session_state.pending_del[:]
                 ok, msg = do_delete(ids)
@@ -1141,7 +1141,7 @@ def render_register_table(rows_df: pd.DataFrame, key_prefix: str):
             if st.button(
                 "❌ Cancel",
                 key=key_prefix + "_cancel_bulk",
-                use_container_width=True
+                width='stretch'
             ):
                 st.session_state.pending_del = []
                 st.rerun()
@@ -1215,7 +1215,7 @@ def render_register_table(rows_df: pd.DataFrame, key_prefix: str):
                     "✅ Yes, Delete",
                     key=key_prefix + "_sconf_" + str(eid),
                     type="primary",
-                    use_container_width=True
+                    width='stretch'
                 ):
                     ok, msg = do_delete([eid])
                     st.session_state.pending_del = []
@@ -1228,7 +1228,7 @@ def render_register_table(rows_df: pd.DataFrame, key_prefix: str):
                 if st.button(
                     "❌ Cancel",
                     key=key_prefix + "_scan_" + str(eid),
-                    use_container_width=True
+                    width='stretch'
                 ):
                     st.session_state.pending_del = []
                     st.rerun()
@@ -1304,7 +1304,7 @@ def render_register_table(rows_df: pd.DataFrame, key_prefix: str):
                 "🗑️",
                 key=key_prefix + "_del_" + str(eid),
                 help="Delete entry #" + str(eid),
-                use_container_width=True
+                width='stretch'
             ):
                 if st.session_state.pending_del == [eid]:
                     st.session_state.pending_del = []
@@ -1517,7 +1517,7 @@ def render_edit():
             )
 
         save = st.form_submit_button(
-            "💾 Save Changes", type="primary", use_container_width=True
+            "💾 Save Changes", type="primary", width='stretch'
         )
 
     if save:
@@ -1771,7 +1771,7 @@ def render_analytics():
                 f"{s['75%']:.2f}",   f"{s['max']:.2f}"
             ]
         })
-        st.dataframe(sdf, use_container_width=True, hide_index=True)
+        st.dataframe(sdf, width='stretch', hide_index=True)
 
 
 # ============================================================
@@ -1828,7 +1828,7 @@ def render_download_reports():
     )
     with st.expander("👁️ Preview", expanded=False):
         st.dataframe(prepare_export_df(df_filt).head(10),
-                     use_container_width=True, hide_index=True)
+                     width='stretch', hide_index=True)
     c1, c2 = st.columns(2)
     with c1:
         download_widget("📥 Download Full Register (CSV)",
@@ -1935,9 +1935,9 @@ def render_download_reports():
     if len(con_monthly) > 0 or len(rcv_monthly) > 0:
         with st.expander("👁️ Preview — Monthly Summary", expanded=False):
             st.markdown("**Consumption by Month:**")
-            st.dataframe(con_monthly, use_container_width=True, hide_index=True)
+            st.dataframe(con_monthly, width='stretch', hide_index=True)
             st.markdown("**Receipts by Month:**")
-            st.dataframe(rcv_monthly, use_container_width=True, hide_index=True)
+            st.dataframe(rcv_monthly, width='stretch', hide_index=True)
 
         def build_monthly_excel() -> bytes:
             buf2 = BytesIO()
@@ -1983,12 +1983,12 @@ def render_import():
                 st.error("❌ Missing columns: " + str(missing))
             else:
                 st.success("✅ File structure validated!")
-                st.dataframe(imp_df.head(5), use_container_width=True, hide_index=True)
+                st.dataframe(imp_df.head(5), width='stretch', hide_index=True)
                 st.info("**" + str(len(imp_df)) + " records** found in file.")
                 if st.button(
                     "🔄 Import & Replace Data",
                     type="primary",
-                    use_container_width=True
+                    width='stretch'
                 ):
                     st.session_state.stock_data        = imp_df
                     st.session_state.initial_stock_set = True
