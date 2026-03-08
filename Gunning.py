@@ -51,109 +51,131 @@ except FileNotFoundError:
     st.error("🚨 Missing 'config.yaml' file. Please create it to enable login.")
     st.stop()
 
-# ── Login page CSS — injected always, only affects unauthenticated state ──────
-st.markdown("""
-<style>
-/* Dark gradient background */
-[data-testid="stAppViewContainer"] {
-    background: linear-gradient(160deg, #0a1628 0%, #0f3460 60%, #1a1a2e 100%) !important;
-}
-[data-testid="stMain"] { background: transparent !important; }
-header[data-testid="stHeader"] { background: transparent !important; box-shadow: none !important; }
-#MainMenu, footer { visibility: hidden !important; }
-
-/* Centre the block container and constrain width for login */
-[data-testid="block-container"] {
-    max-width: 460px !important;
-    padding-top: 48px !important;
-    margin: 0 auto !important;
-}
-
-/* Card around the form */
-div[data-testid="stForm"] {
-    background: white !important;
-    border-radius: 16px !important;
-    padding: 28px 28px 20px !important;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.45) !important;
-    border-top: 4px solid #e8a020 !important;
-}
-div[data-testid="stForm"] h2 { display: none !important; }
-
-/* Inputs */
-div[data-testid="stForm"] input {
-    border-radius: 8px !important;
-    border: 1.5px solid #e0e4f0 !important;
-    background: #f7f9ff !important;
-    font-size: 14px !important;
-}
-div[data-testid="stForm"] input:focus {
-    border-color: #0f3460 !important;
-    box-shadow: 0 0 0 3px rgba(15,52,96,0.1) !important;
-}
-div[data-testid="stForm"] label p {
-    font-weight: 600 !important;
-    color: #2c3e60 !important;
-    font-size: 13px !important;
-}
-
-/* Login button */
-div[data-testid="stForm"] button {
-    background: linear-gradient(135deg, #e8a020, #c97d10) !important;
-    color: white !important;
-    border-radius: 8px !important;
-    font-weight: 700 !important;
-    font-size: 14px !important;
-    border: none !important;
-    width: 100% !important;
-    padding: 11px !important;
-    box-shadow: 0 4px 14px rgba(232,160,32,0.4) !important;
-}
-
-/* Remember me */
-[data-testid="stCheckbox"] label p,
-[data-testid="stCheckbox"] span { color: rgba(255,255,255,0.75) !important; font-size: 13px !important; }
-</style>
-""", unsafe_allow_html=True)
-
 # ── Show login page only when not authenticated ───────────────────────────────
 if not st.session_state.get("authentication_status"):
 
-    # Hero header (pure HTML, no Streamlit columns — guaranteed to render)
     st.markdown("""
-    <div style="text-align:center; padding: 0 0 32px 0;">
+    <style>
+    /* Dark gradient background — login only */
+    [data-testid="stAppViewContainer"] {
+        background: linear-gradient(160deg, #0a1628 0%, #0f3460 60%, #1a1a2e 100%) !important;
+    }
+    [data-testid="stMain"] { background: transparent !important; }
+    header[data-testid="stHeader"] { background: transparent !important; box-shadow: none !important; }
+    #MainMenu, footer { visibility: hidden !important; }
+
+    /* Narrow centred column */
+    [data-testid="block-container"] {
+        max-width: 380px !important;
+        padding-top: 40px !important;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+        margin: 0 auto !important;
+    }
+
+    /* Login card */
+    div[data-testid="stForm"] {
+        background: white !important;
+        border-radius: 14px !important;
+        padding: 22px 24px 16px !important;
+        box-shadow: 0 16px 50px rgba(0,0,0,0.45) !important;
+        border-top: 4px solid #e8a020 !important;
+    }
+    div[data-testid="stForm"] h2 { display: none !important; }
+
+    /* Inputs */
+    div[data-testid="stForm"] input {
+        border-radius: 7px !important;
+        border: 1.5px solid #e0e4f0 !important;
+        background: #f7f9ff !important;
+        font-size: 13px !important;
+        padding: 7px 10px !important;
+    }
+    div[data-testid="stForm"] input:focus {
+        border-color: #0f3460 !important;
+        box-shadow: 0 0 0 3px rgba(15,52,96,0.1) !important;
+    }
+    div[data-testid="stForm"] label p {
+        font-weight: 600 !important;
+        color: #2c3e60 !important;
+        font-size: 12px !important;
+    }
+
+    /* Shrink the show/hide password eye button */
+    div[data-testid="stForm"] button[data-testid="baseButton-minimal"],
+    div[data-testid="stForm"] [data-testid="InputInstructions"] ~ div button,
+    div[data-testid="stForm"] .st-emotion-cache-1whk732,
+    div[data-testid="stForm"] [data-baseweb="input"] button {
+        width: 26px !important;
+        height: 26px !important;
+        min-height: 26px !important;
+        padding: 0 !important;
+        font-size: 11px !important;
+    }
+    div[data-testid="stForm"] [data-baseweb="input"] button svg {
+        width: 14px !important;
+        height: 14px !important;
+    }
+
+    /* Login submit button */
+    div[data-testid="stForm"] button[kind="primaryFormSubmit"],
+    div[data-testid="stForm"] button[data-testid="baseButton-primaryFormSubmit"] {
+        background: linear-gradient(135deg, #e8a020, #c97d10) !important;
+        color: white !important;
+        border-radius: 8px !important;
+        font-weight: 700 !important;
+        font-size: 13px !important;
+        border: none !important;
+        width: 100% !important;
+        padding: 10px !important;
+        box-shadow: 0 4px 14px rgba(232,160,32,0.4) !important;
+        margin-top: 4px !important;
+    }
+
+    /* Remember me */
+    [data-testid="stCheckbox"] label p,
+    [data-testid="stCheckbox"] span {
+        color: rgba(255,255,255,0.7) !important;
+        font-size: 12px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Hero
+    st.markdown("""
+    <div style="text-align:center; padding: 0 0 24px 0;">
         <div style="
             display: inline-flex;
             align-items: center; justify-content: center;
-            width: 80px; height: 80px;
+            width: 68px; height: 68px;
             background: linear-gradient(135deg, #e8a020, #c97d10);
-            border-radius: 20px;
-            font-size: 38px;
-            box-shadow: 0 8px 32px rgba(232,160,32,0.45);
-            margin-bottom: 18px;
+            border-radius: 16px;
+            font-size: 32px;
+            box-shadow: 0 8px 28px rgba(232,160,32,0.45);
+            margin-bottom: 14px;
         ">🏭</div>
-        <h1 style="color:white; font-size:2rem; font-weight:900;
-                   margin:0 0 6px 0; letter-spacing:.5px;">
+        <h1 style="color:white; font-size:1.6rem; font-weight:900;
+                   margin:0 0 5px 0; letter-spacing:.4px;">
             Gunning Mass Stock Register
         </h1>
-        <p style="color:rgba(255,255,255,0.5); font-size:.95rem; margin:0 0 6px 0;">
+        <p style="color:rgba(255,255,255,0.45); font-size:.85rem; margin:0 0 14px 0;">
             EAF Sidewall Repair &nbsp;·&nbsp; Stock Management System
         </p>
-        <div style="display:flex; justify-content:center; gap:10px;
-                    flex-wrap:wrap; margin-top:16px;">
-            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15);
-                         border-radius:50px; padding:5px 14px; color:rgba(255,255,255,0.7);
-                         font-size:12px;">📦 Stock Tracking</span>
-            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15);
-                         border-radius:50px; padding:5px 14px; color:rgba(255,255,255,0.7);
-                         font-size:12px;">📊 Analytics &amp; Reports</span>
-            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15);
-                         border-radius:50px; padding:5px 14px; color:rgba(255,255,255,0.7);
-                         font-size:12px;">☁️ Google Sheets Sync</span>
+        <div style="display:flex; justify-content:center; gap:8px; flex-wrap:wrap;">
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.14);
+                         border-radius:50px; padding:4px 11px; color:rgba(255,255,255,0.65);
+                         font-size:11px;">📦 Stock Tracking</span>
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.14);
+                         border-radius:50px; padding:4px 11px; color:rgba(255,255,255,0.65);
+                         font-size:11px;">📊 Analytics</span>
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.14);
+                         border-radius:50px; padding:4px 11px; color:rgba(255,255,255,0.65);
+                         font-size:11px;">☁️ Cloud Sync</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Remember Me checkbox (before authenticator to set expiry)
+    # Remember Me (before authenticator to set expiry)
     remember_me = st.checkbox(
         "🔒 Remember me for 30 days",
         value=st.session_state.get("remember_me_pref", False),
@@ -177,8 +199,8 @@ if not st.session_state.get("authentication_status"):
         st.error("❌ Incorrect username or password. Please try again.")
 
     st.markdown("""
-    <p style="text-align:center; color:rgba(255,255,255,0.2);
-              font-size:11px; margin-top:32px;">
+    <p style="text-align:center; color:rgba(255,255,255,0.18);
+              font-size:11px; margin-top:28px;">
         © 2025 Gunning Mass Stock Management · EAF Operations
     </p>
     """, unsafe_allow_html=True)
