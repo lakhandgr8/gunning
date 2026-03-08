@@ -192,32 +192,27 @@ GSHEETS_SCOPES = [
 ]
 
 
-@st.cache_resource
 def _get_gspread_client():
     """
-    Build and cache an authenticated gspread client using the
-    service account credentials stored in st.secrets.
-    The @st.cache_resource decorator means this runs once per
-    server process — not once per user session.
+    Build an authenticated gspread client each time — no caching,
+    avoids stale-credential bugs with st.cache_resource.
     """
     creds_dict = dict(st.secrets["connections"]["gsheets"])
-    # Remove non-credential keys that st-gsheets-connection adds
+    # Strip keys that are not part of the service-account JSON
     for key in ("spreadsheet", "type", "allow_programmatic_writes"):
         creds_dict.pop(key, None)
-
     creds = Credentials.from_service_account_info(creds_dict, scopes=GSHEETS_SCOPES)
     return gspread.authorize(creds)
 
 
 def _get_worksheet():
     """Return the StockData worksheet object."""
-    client      = _get_gspread_client()
+    client          = _get_gspread_client()
     spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-    sh          = client.open_by_url(spreadsheet_url)
+    sh              = client.open_by_url(spreadsheet_url)
     try:
         ws = sh.worksheet("StockData")
     except gspread.exceptions.WorksheetNotFound:
-        # Create the sheet with headers if it doesn't exist yet
         ws = sh.add_worksheet(title="StockData", rows=1000, cols=20)
         ws.append_row(STOCK_COLUMNS)
     return ws
@@ -274,14 +269,16 @@ def load_data() -> pd.DataFrame:
         return df
 
     except Exception as e:
-        st.error(f"❌ Error loading data from Google Sheets: {e}")
+        import traceback
+        st.error(f"❌ LOAD ERROR — {type(e).__name__}: {e}")
+        st.code(traceback.format_exc())
         return pd.DataFrame(columns=STOCK_COLUMNS)
 
 
 def save_data(df: pd.DataFrame) -> bool:
     """
     Overwrite the StockData worksheet with the full DataFrame.
-    Uses clear() + update() so every save is a clean atomic write.
+    Uses clear() + update() for an atomic write.
     """
     try:
         if df is None or len(df) == 0:
@@ -290,11 +287,9 @@ def save_data(df: pd.DataFrame) -> bool:
         df_out = _sanitize_for_sheets(df)
         ws     = _get_worksheet()
 
-        # Build list-of-lists: header row + data rows
         header = STOCK_COLUMNS
         rows   = df_out[STOCK_COLUMNS].values.tolist()
 
-        # Convert every value to a JSON-safe Python type
         safe_rows = []
         for row in rows:
             safe_row = []
@@ -307,13 +302,14 @@ def save_data(df: pd.DataFrame) -> bool:
                     safe_row.append(str(val))
             safe_rows.append(safe_row)
 
-        # Atomic write: clear sheet, write header, write data
         ws.clear()
         ws.update('A1', [header] + safe_rows)
         return True
 
     except Exception as e:
-        st.error(f"❌ Error saving data to Google Sheets: {e}")
+        import traceback
+        st.error(f"❌ SAVE ERROR — {type(e).__name__}: {e}")
+        st.code(traceback.format_exc())
         return False
 
 
