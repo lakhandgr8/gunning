@@ -691,7 +691,8 @@ with st.sidebar:
         "📖 View Register",
         "✏️ Edit Entry",
         "📊 Analytics",
-        "💾 Download Reports",
+        "📋 Reports",
+        "💾 Download Data",
         "📤 Import Data",
     ], label_visibility="collapsed")
 
@@ -1833,13 +1834,673 @@ def render_analytics():
 
 
 # ============================================================
-# MODULE 8 — DOWNLOAD REPORTS
+# MODULE 8B — REPORTS (4 full reports with charts + tables + PDF/Excel)
+# ============================================================
+
+def _report_filters(key_prefix: str, df: pd.DataFrame):
+    """
+    Render a unified filter bar and return the filtered DataFrame.
+    Filters: date range, entry type, repair zone, heat number substring.
+    """
+    st.markdown(
+        "<div class='section-header'>🔍 Report Filters</div>",
+        unsafe_allow_html=True
+    )
+    fc1, fc2, fc3, fc4, fc5 = st.columns(5)
+
+    dmin  = pd.to_datetime(df['Date']).min().date()
+    dmax  = pd.to_datetime(df['Date']).max().date()
+
+    with fc1:
+        dfrom = st.date_input("From:", value=dmin, key=key_prefix + "_from")
+    with fc2:
+        dto   = st.date_input("To:",   value=dmax, key=key_prefix + "_to")
+    with fc3:
+        etype_opts = ["All"] + sorted(df['Entry Type'].unique().tolist())
+        etype = st.selectbox("Entry Type:", etype_opts, key=key_prefix + "_etype")
+    with fc4:
+        zone_opts = ["All"] + REPAIR_ZONES
+        zone  = st.selectbox("Repair Zone:", zone_opts, key=key_prefix + "_zone")
+    with fc5:
+        heat  = st.text_input("Heat No. contains:", value="", key=key_prefix + "_heat",
+                               placeholder="e.g. H-2024")
+
+    ddf = df.copy()
+    ddf['Date'] = pd.to_datetime(ddf['Date'])
+    ddf = ddf[(ddf['Date'].dt.date >= dfrom) & (ddf['Date'].dt.date <= dto)]
+    if etype != "All":
+        ddf = ddf[ddf['Entry Type'] == etype]
+    if zone != "All":
+        ddf = ddf[ddf['Remarks'].str.contains(zone, case=False, na=False)]
+    if heat.strip():
+        ddf = ddf[ddf['Remarks'].str.contains(heat.strip(), case=False, na=False)]
+
+    st.caption(
+        f"📅 {fmt_date(pd.Timestamp(dfrom))} → {fmt_date(pd.Timestamp(dto))}  |  "
+        f"**{len(ddf)}** entries after filters"
+    )
+    return ddf.reset_index(drop=True)
+
+
+def _fig_to_image(fig) -> bytes:
+    """Convert a plotly figure to PNG bytes for PDF embedding."""
+    try:
+        return fig.to_image(format="png", width=900, height=400, scale=2)
+    except Exception:
+        return None
+
+
+def _build_report_excel(sheets: dict) -> bytes:
+    """
+    sheets = {'Sheet Name': dataframe, ...}
+    Returns an Excel workbook bytes object.
+    """
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+        for name, df_s in sheets.items():
+            df_s.to_excel(writer, index=False, sheet_name=name[:31])
+    return buf.getvalue()
+
+
+def _build_report_pdf(title: str, sections: list) -> bytes:
+    """
+    sections = list of dicts:
+      {'type': 'heading', 'text': str}
+      {'type': 'text',    'text': str}
+      {'type': 'table',   'df': DataFrame}
+      {'type': 'fig',     'fig': plotly Figure}
+    Returns PDF bytes using reportlab.
+    """
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
+                                    Table, TableStyle, Image as RLImage,
+                                    PageBreak, HRFlowable)
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    import tempfile, os
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=landscape(A4),
+        leftMargin=1.5*cm, rightMargin=1.5*cm,
+        topMargin=1.5*cm, bottomMargin=1.5*cm
+    )
+
+    styles = getSampleStyleSheet()
+    style_title = ParagraphStyle('ReportTitle', parent=styles['Title'],
+                                  fontSize=18, spaceAfter=6,
+                                  textColor=colors.HexColor('#0f3460'))
+    style_h2    = ParagraphStyle('H2', parent=styles['Heading2'],
+                                  fontSize=13, spaceBefore=14, spaceAfter=4,
+                                  textColor=colors.HexColor('#16213e'))
+    style_body  = ParagraphStyle('Body', parent=styles['Normal'],
+                                  fontSize=9, spaceAfter=4)
+    style_meta  = ParagraphStyle('Meta', parent=styles['Normal'],
+                                  fontSize=8, textColor=colors.grey)
+
+    story = []
+    story.append(Paragraph("🏭 Gunning Mass Stock Register", style_title))
+    story.append(Paragraph(title, style_h2))
+    story.append(Paragraph(
+        f"Generated: {datetime.now().strftime('%d-%b-%Y %H:%M')}  |  EAF Sidewall Repair",
+        style_meta
+    ))
+    story.append(HRFlowable(width="100%", thickness=1,
+                             color=colors.HexColor('#0f3460'), spaceAfter=10))
+
+    for sec in sections:
+        stype = sec.get('type')
+
+        if stype == 'heading':
+            story.append(Spacer(1, 6))
+            story.append(Paragraph(sec['text'], style_h2))
+
+        elif stype == 'text':
+            story.append(Paragraph(sec['text'], style_body))
+
+        elif stype == 'table':
+            df_t = sec['df'].copy()
+            df_t = df_t.fillna('')
+            data = [list(df_t.columns)] + df_t.astype(str).values.tolist()
+
+            col_w = (landscape(A4)[0] - 3*cm) / max(len(df_t.columns), 1)
+            col_widths = [col_w] * len(df_t.columns)
+
+            tbl = Table(data, colWidths=col_widths, repeatRows=1)
+            tbl.setStyle(TableStyle([
+                ('BACKGROUND',  (0, 0), (-1, 0),  colors.HexColor('#0f3460')),
+                ('TEXTCOLOR',   (0, 0), (-1, 0),  colors.white),
+                ('FONTNAME',    (0, 0), (-1, 0),  'Helvetica-Bold'),
+                ('FONTSIZE',    (0, 0), (-1, 0),  8),
+                ('FONTSIZE',    (0, 1), (-1, -1), 7),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1),
+                 [colors.white, colors.HexColor('#f0f4ff')]),
+                ('GRID',        (0, 0), (-1, -1), 0.3, colors.HexColor('#cccccc')),
+                ('VALIGN',      (0, 0), (-1, -1), 'MIDDLE'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 4),
+                ('RIGHTPADDING',(0, 0), (-1, -1), 4),
+                ('TOPPADDING',  (0, 0), (-1, -1), 3),
+                ('BOTTOMPADDING',(0,0), (-1, -1), 3),
+            ]))
+            story.append(tbl)
+            story.append(Spacer(1, 8))
+
+        elif stype == 'fig':
+            img_bytes = _fig_to_image(sec['fig'])
+            if img_bytes:
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+                tmp.write(img_bytes)
+                tmp.close()
+                img_w = landscape(A4)[0] - 3*cm
+                img_h = img_w * 400 / 900
+                story.append(RLImage(tmp.name, width=img_w, height=img_h))
+                story.append(Spacer(1, 8))
+                os.unlink(tmp.name)
+
+        elif stype == 'pagebreak':
+            story.append(PageBreak())
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+# ── Report 1: Stock Movement ──────────────────────────────────────────────────
+def _render_stock_movement(ddf: pd.DataFrame, ts: str):
+    st.markdown("### 📈 Stock Movement Report")
+
+    if len(ddf) == 0:
+        st.warning("No data for selected filters.")
+        return
+
+    df_plot = ddf.copy()
+    df_plot['Date'] = pd.to_datetime(df_plot['Date'])
+    df_plot = df_plot.sort_values('Date')
+
+    # ── KPIs ──
+    k1, k2, k3, k4 = st.columns(4)
+    open_stk  = float(df_plot.iloc[0]['Opening Stock (Kg)'])
+    close_stk = float(df_plot.iloc[-1]['Closing Stock (Kg)'])
+    net_chg   = close_stk - open_stk
+    rcv_tot   = df_plot[df_plot['Entry Type'].isin(['Receipt','Initial'])]['Received from Store (Kg)'].sum()
+    con_tot   = df_plot[df_plot['Entry Type'] == 'Consumption']['Used for Sidewall Repair (Kg)'].sum()
+
+    k1.markdown(kpi("Opening Stock",  f"{open_stk:.0f} Kg",  f"{kg2mt(open_stk):.2f} MT"),  unsafe_allow_html=True)
+    k2.markdown(kpi("Closing Stock",  f"{close_stk:.0f} Kg", f"{kg2mt(close_stk):.2f} MT"), unsafe_allow_html=True)
+    k3.markdown(kpi("Net Change",
+                    ("+" if net_chg >= 0 else "") + f"{net_chg:.0f} Kg",
+                    "received − consumed"),                                                   unsafe_allow_html=True)
+    k4.markdown(kpi("Entries",        str(len(ddf)),          "in period"),                  unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ── Chart 1: Stock level line ──
+    marker_colors  = ['#43a047' if t in ['Receipt','Initial'] else '#fb8c00' for t in df_plot['Entry Type']]
+    marker_symbols = ['triangle-up' if t in ['Receipt','Initial'] else 'triangle-down' for t in df_plot['Entry Type']]
+    fig1 = go.Figure()
+    fig1.add_trace(go.Scatter(
+        x=df_plot['Date'], y=df_plot['Closing Stock (Kg)'],
+        mode='lines+markers', name='Closing Stock',
+        line=dict(color='#0f3460', width=2.5),
+        fill='tozeroy', fillcolor='rgba(15,52,96,.08)',
+        marker=dict(size=8, color=marker_colors, symbol=marker_symbols),
+        hovertemplate='%{x|%d-%b-%Y}<br>Stock: %{y:.0f} Kg<extra></extra>'
+    ))
+    fig1.add_hline(y=st.session_state.low_thr, line_dash="dash",
+                   line_color="#e53935",
+                   annotation_text=f"Low threshold: {st.session_state.low_thr:.0f} Kg")
+    fig1.update_layout(height=350, title="Stock Level Over Period",
+                       xaxis_title="Date", yaxis_title="Stock (Kg)",
+                       hovermode='x unified', plot_bgcolor='white', paper_bgcolor='white')
+
+    # ── Chart 2: Daily opening vs closing bar ──
+    fig2 = go.Figure()
+    fig2.add_trace(go.Bar(x=df_plot['Date'], y=df_plot['Opening Stock (Kg)'],
+                          name='Opening', marker_color='#90caf9', opacity=0.7))
+    fig2.add_trace(go.Bar(x=df_plot['Date'], y=df_plot['Closing Stock (Kg)'],
+                          name='Closing', marker_color='#0f3460'))
+    fig2.update_layout(barmode='group', height=320, title="Opening vs Closing Stock",
+                       xaxis_title="Date", yaxis_title="Kg",
+                       plot_bgcolor='white', paper_bgcolor='white')
+
+    c1, c2 = st.columns(2)
+    with c1: st.plotly_chart(fig1, use_container_width=True)
+    with c2: st.plotly_chart(fig2, use_container_width=True)
+
+    # ── Table ──
+    st.markdown("<div class='section-header'>📋 Stock Movement Table</div>", unsafe_allow_html=True)
+    tdf = df_plot[['Date','Entry Type','Opening Stock (Kg)',
+                   'Received from Store (MT)','Used for Sidewall Repair (Kg)',
+                   'Closing Stock (Kg)','Remarks']].copy()
+    tdf['Date'] = tdf['Date'].apply(fmt_date)
+    tdf = tdf.round(2)
+    st.dataframe(tdf, width='stretch', hide_index=True)
+
+    # ── Exports ──
+    st.markdown("---")
+    ex1, ex2 = st.columns(2)
+    with ex1:
+        xlsx = _build_report_excel({'Stock Movement': tdf})
+        st.download_button("📥 Download Excel", data=xlsx,
+                           file_name=f"Stock_Movement_{ts}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           width='stretch')
+    with ex2:
+        try:
+            pdf = _build_report_pdf("Stock Movement Report", [
+                {'type': 'text',    'text': f"Period: {tdf['Date'].iloc[0]} → {tdf['Date'].iloc[-1]}  |  Entries: {len(tdf)}"},
+                {'type': 'heading', 'text': 'Stock Level Chart'},
+                {'type': 'fig',     'fig': fig1},
+                {'type': 'heading', 'text': 'Opening vs Closing Stock'},
+                {'type': 'fig',     'fig': fig2},
+                {'type': 'heading', 'text': 'Detail Table'},
+                {'type': 'table',   'df': tdf},
+            ])
+            st.download_button("📄 Download PDF", data=pdf,
+                               file_name=f"Stock_Movement_{ts}.pdf",
+                               mime="application/pdf", width='stretch')
+        except Exception as e:
+            st.warning(f"PDF export requires `kaleido` + `reportlab`. Error: {e}")
+
+
+# ── Report 2: Consumption Analysis ───────────────────────────────────────────
+def _render_consumption_analysis(ddf: pd.DataFrame, ts: str):
+    st.markdown("### 🔥 Consumption Analysis Report")
+
+    con_df = ddf[ddf['Entry Type'] == 'Consumption'].copy()
+    if len(con_df) == 0:
+        st.warning("No consumption entries for selected filters.")
+        return
+
+    con_df['Date'] = pd.to_datetime(con_df['Date'])
+    con_df = con_df.sort_values('Date')
+
+    total  = con_df['Used for Sidewall Repair (Kg)'].sum()
+    avg    = con_df['Used for Sidewall Repair (Kg)'].mean()
+    mx     = con_df['Used for Sidewall Repair (Kg)'].max()
+    mn     = con_df['Used for Sidewall Repair (Kg)'].min()
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.markdown(kpi("Total Consumed", f"{total:.0f} Kg", f"{kg2mt(total):.2f} MT"), unsafe_allow_html=True)
+    k2.markdown(kpi("Avg per Entry",  f"{avg:.0f} Kg",   "per event"),              unsafe_allow_html=True)
+    k3.markdown(kpi("Max Single",     f"{mx:.0f} Kg",    "highest event"),          unsafe_allow_html=True)
+    k4.markdown(kpi("Events",         str(len(con_df)),  "in period"),              unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ── Chart 1: Consumption per event ──
+    fig1 = px.bar(con_df, x='Date', y='Used for Sidewall Repair (Kg)',
+                  color='Used for Sidewall Repair (Kg)',
+                  color_continuous_scale='Oranges',
+                  title="Consumption per Event",
+                  hover_data={'Date': '|%d-%b-%Y'})
+    fig1.add_hline(y=avg, line_dash="dot", line_color="#1e88e5",
+                   annotation_text=f"Avg: {avg:.0f} Kg")
+    fig1.update_layout(height=320, plot_bgcolor='white', paper_bgcolor='white')
+
+    # ── Chart 2: Zone breakdown ──
+    zone_data = {}
+    for z in REPAIR_ZONES:
+        kg = con_df.loc[con_df['Remarks'].str.contains(z, case=False, na=False),
+                        'Used for Sidewall Repair (Kg)'].sum()
+        if kg > 0:
+            zone_data[z] = kg
+
+    fig2 = None
+    fig3 = None
+    if zone_data:
+        zdf = pd.DataFrame(list(zone_data.items()), columns=['Zone', 'Kg Used'])
+        fig2 = px.bar(zdf, x='Zone', y='Kg Used', color='Kg Used',
+                      color_continuous_scale='Reds', title="Consumption by Repair Zone")
+        fig2.update_layout(height=320, plot_bgcolor='white', paper_bgcolor='white')
+
+        fig3 = go.Figure(data=[go.Pie(
+            labels=zdf['Zone'], values=zdf['Kg Used'],
+            hole=0.42, textinfo='label+percent+value',
+            marker_colors=px.colors.sequential.Oranges[2:]
+        )])
+        fig3.update_layout(title="Zone Share", height=320, paper_bgcolor='white')
+
+    # ── Chart 4: Monthly consumption ──
+    con_df['Month'] = con_df['Date'].dt.to_period('M').astype(str)
+    monthly = (con_df.groupby('Month')['Used for Sidewall Repair (Kg)']
+               .agg(['sum','count','mean']).reset_index())
+    monthly.columns = ['Month','Total (Kg)','Events','Avg (Kg)']
+    monthly = monthly.round(2)
+
+    fig4 = go.Figure()
+    fig4.add_trace(go.Bar(x=monthly['Month'], y=monthly['Total (Kg)'],
+                          name='Total (Kg)', marker_color='#fb8c00'))
+    fig4.add_trace(go.Scatter(x=monthly['Month'], y=monthly['Avg (Kg)'],
+                              mode='lines+markers', name='Avg (Kg)',
+                              line=dict(color='#1e88e5', width=2), yaxis='y2'))
+    fig4.update_layout(
+        barmode='group', height=320, title="Monthly Consumption",
+        yaxis=dict(title='Total (Kg)'),
+        yaxis2=dict(title='Avg (Kg)', overlaying='y', side='right'),
+        plot_bgcolor='white', paper_bgcolor='white'
+    )
+
+    c1, c2 = st.columns(2)
+    with c1: st.plotly_chart(fig1, use_container_width=True)
+    with c2: st.plotly_chart(fig4, use_container_width=True)
+
+    if fig2 and fig3:
+        c3, c4 = st.columns(2)
+        with c3: st.plotly_chart(fig2, use_container_width=True)
+        with c4: st.plotly_chart(fig3, use_container_width=True)
+
+    # ── Tables ──
+    st.markdown("<div class='section-header'>📋 Consumption Detail Table</div>", unsafe_allow_html=True)
+    tdf = con_df[['Date','Opening Stock (Kg)','Used for Sidewall Repair (Kg)',
+                  'Closing Stock (Kg)','Total Consumption Till Date (Kg)','Remarks']].copy()
+    tdf['Date'] = tdf['Date'].apply(fmt_date)
+    tdf = tdf.round(2)
+    st.dataframe(tdf, width='stretch', hide_index=True)
+
+    if zone_data:
+        st.markdown("<div class='section-header'>📍 Zone Summary</div>", unsafe_allow_html=True)
+        st.dataframe(zdf.sort_values('Kg Used', ascending=False).round(2),
+                     width='stretch', hide_index=True)
+
+    st.markdown("<div class='section-header'>📅 Monthly Summary</div>", unsafe_allow_html=True)
+    st.dataframe(monthly, width='stretch', hide_index=True)
+
+    # ── Exports ──
+    st.markdown("---")
+    ex1, ex2 = st.columns(2)
+    with ex1:
+        sheets = {'Consumption Detail': tdf, 'Monthly Summary': monthly}
+        if zone_data:
+            sheets['Zone Breakdown'] = zdf.round(2)
+        xlsx = _build_report_excel(sheets)
+        st.download_button("📥 Download Excel", data=xlsx,
+                           file_name=f"Consumption_Analysis_{ts}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           width='stretch')
+    with ex2:
+        try:
+            sections = [
+                {'type': 'text',    'text': f"Total: {total:.0f} Kg  |  Avg: {avg:.0f} Kg  |  Events: {len(con_df)}"},
+                {'type': 'heading', 'text': 'Consumption per Event'},
+                {'type': 'fig',     'fig': fig1},
+                {'type': 'heading', 'text': 'Monthly Consumption'},
+                {'type': 'fig',     'fig': fig4},
+            ]
+            if fig2:
+                sections += [
+                    {'type': 'heading', 'text': 'Consumption by Zone'},
+                    {'type': 'fig',     'fig': fig2},
+                    {'type': 'fig',     'fig': fig3},
+                ]
+            sections += [
+                {'type': 'heading', 'text': 'Detail Table'},
+                {'type': 'table',   'df': tdf},
+                {'type': 'heading', 'text': 'Monthly Summary'},
+                {'type': 'table',   'df': monthly},
+            ]
+            pdf = _build_report_pdf("Consumption Analysis Report", sections)
+            st.download_button("📄 Download PDF", data=pdf,
+                               file_name=f"Consumption_Analysis_{ts}.pdf",
+                               mime="application/pdf", width='stretch')
+        except Exception as e:
+            st.warning(f"PDF export requires `kaleido` + `reportlab`. Error: {e}")
+
+
+# ── Report 3: Receipt / Procurement ──────────────────────────────────────────
+def _render_receipt_report(ddf: pd.DataFrame, ts: str):
+    st.markdown("### 📥 Receipt / Procurement Report")
+
+    rcv_df = ddf[ddf['Entry Type'].isin(['Receipt','Initial'])].copy()
+    if len(rcv_df) == 0:
+        st.warning("No receipt entries for selected filters.")
+        return
+
+    rcv_df['Date'] = pd.to_datetime(rcv_df['Date'])
+    rcv_df = rcv_df.sort_values('Date')
+
+    total_kg = rcv_df['Received from Store (Kg)'].sum()
+    total_mt = rcv_df['Received from Store (MT)'].sum()
+    avg_mt   = rcv_df['Received from Store (MT)'].mean()
+
+    k1, k2, k3 = st.columns(3)
+    k1.markdown(kpi("Total Received", f"{total_kg:.0f} Kg", f"{total_mt:.1f} MT"), unsafe_allow_html=True)
+    k2.markdown(kpi("Avg per Receipt", f"{avg_mt:.1f} MT",   "per GRN"),            unsafe_allow_html=True)
+    k3.markdown(kpi("Receipts",        str(len(rcv_df)),      "in period"),          unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ── Chart 1: Receipts over time ──
+    fig1 = go.Figure()
+    fig1.add_trace(go.Bar(x=rcv_df['Date'], y=rcv_df['Received from Store (MT)'],
+                          name='Received (MT)', marker_color='#43a047',
+                          hovertemplate='%{x|%d-%b-%Y}<br>%{y:.1f} MT<extra></extra>'))
+    fig1.update_layout(height=320, title="Receipts Over Time",
+                       xaxis_title="Date", yaxis_title="MT",
+                       plot_bgcolor='white', paper_bgcolor='white')
+
+    # ── Chart 2: Cumulative received ──
+    rcv_df['Cumul Received (Kg)'] = rcv_df['Received from Store (Kg)'].cumsum()
+    fig2 = go.Figure()
+    fig2.add_trace(go.Scatter(x=rcv_df['Date'], y=rcv_df['Cumul Received (Kg)'],
+                              mode='lines+markers', name='Cumulative',
+                              line=dict(color='#43a047', width=2.5),
+                              fill='tozeroy', fillcolor='rgba(67,160,71,.1)'))
+    fig2.update_layout(height=320, title="Cumulative Receipts",
+                       xaxis_title="Date", yaxis_title="Kg",
+                       plot_bgcolor='white', paper_bgcolor='white')
+
+    # ── Chart 3: Monthly receipts ──
+    rcv_df['Month'] = rcv_df['Date'].dt.to_period('M').astype(str)
+    monthly = (rcv_df.groupby('Month')['Received from Store (Kg)']
+               .agg(['sum','count']).reset_index())
+    monthly.columns = ['Month','Total Received (Kg)','No. of Receipts']
+    monthly['Total Received (MT)'] = (monthly['Total Received (Kg)'] / 1000).round(3)
+    monthly = monthly.round(2)
+
+    fig3 = px.bar(monthly, x='Month', y='Total Received (Kg)',
+                  color='Total Received (Kg)', color_continuous_scale='Greens',
+                  title="Monthly Receipts (Kg)")
+    fig3.update_layout(height=300, plot_bgcolor='white', paper_bgcolor='white')
+
+    c1, c2 = st.columns(2)
+    with c1: st.plotly_chart(fig1, use_container_width=True)
+    with c2: st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig3, use_container_width=True)
+
+    # ── Tables ──
+    st.markdown("<div class='section-header'>📋 Receipt Detail Table</div>", unsafe_allow_html=True)
+    tdf = rcv_df[['Date','Entry Type','Received from Store (MT)','Received from Store (Kg)',
+                  'Closing Stock (Kg)','Remarks']].copy()
+    tdf['Date'] = tdf['Date'].apply(fmt_date)
+    tdf = tdf.round(2)
+    st.dataframe(tdf, width='stretch', hide_index=True)
+
+    st.markdown("<div class='section-header'>📅 Monthly Summary</div>", unsafe_allow_html=True)
+    st.dataframe(monthly, width='stretch', hide_index=True)
+
+    # ── Exports ──
+    st.markdown("---")
+    ex1, ex2 = st.columns(2)
+    with ex1:
+        xlsx = _build_report_excel({'Receipt Detail': tdf, 'Monthly Summary': monthly})
+        st.download_button("📥 Download Excel", data=xlsx,
+                           file_name=f"Receipt_Report_{ts}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           width='stretch')
+    with ex2:
+        try:
+            pdf = _build_report_pdf("Receipt / Procurement Report", [
+                {'type': 'text',    'text': f"Total: {total_kg:.0f} Kg ({total_mt:.1f} MT)  |  Receipts: {len(rcv_df)}"},
+                {'type': 'heading', 'text': 'Receipts Over Time'},
+                {'type': 'fig',     'fig': fig1},
+                {'type': 'heading', 'text': 'Cumulative Receipts'},
+                {'type': 'fig',     'fig': fig2},
+                {'type': 'heading', 'text': 'Monthly Receipts'},
+                {'type': 'fig',     'fig': fig3},
+                {'type': 'heading', 'text': 'Detail Table'},
+                {'type': 'table',   'df': tdf},
+                {'type': 'heading', 'text': 'Monthly Summary'},
+                {'type': 'table',   'df': monthly},
+            ])
+            st.download_button("📄 Download PDF", data=pdf,
+                               file_name=f"Receipt_Report_{ts}.pdf",
+                               mime="application/pdf", width='stretch')
+        except Exception as e:
+            st.warning(f"PDF export requires `kaleido` + `reportlab`. Error: {e}")
+
+
+# ── Report 4: Monthly Summary ─────────────────────────────────────────────────
+def _render_monthly_summary(ddf: pd.DataFrame, ts: str):
+    st.markdown("### 📅 Monthly Summary Report")
+
+    if len(ddf) == 0:
+        st.warning("No data for selected filters.")
+        return
+
+    df_m = ddf.copy()
+    df_m['Date']  = pd.to_datetime(df_m['Date'])
+    df_m['Month'] = df_m['Date'].dt.to_period('M').astype(str)
+
+    # Build monthly agg
+    con_m = (df_m[df_m['Entry Type'] == 'Consumption']
+             .groupby('Month')['Used for Sidewall Repair (Kg)']
+             .agg(Con_Total='sum', Con_Events='count', Con_Avg='mean', Con_Max='max')
+             .reset_index())
+    rcv_m = (df_m[df_m['Entry Type'].isin(['Receipt','Initial'])]
+             .groupby('Month')['Received from Store (Kg)']
+             .agg(Rcv_Total='sum', Rcv_Events='count')
+             .reset_index())
+    merged = pd.merge(rcv_m, con_m, on='Month', how='outer').fillna(0).sort_values('Month')
+    merged['Rcv_MT']    = (merged['Rcv_Total'] / 1000).round(3)
+    merged['Net Change (Kg)'] = (merged['Rcv_Total'] - merged['Con_Total']).round(2)
+    merged = merged.round(2)
+    merged.columns = ['Month','Received (Kg)','Receipts','Consumed (Kg)',
+                      'Con. Events','Avg Con. (Kg)','Max Con. (Kg)',
+                      'Received (MT)','Net Change (Kg)']
+
+    # KPIs
+    k1, k2, k3, k4 = st.columns(4)
+    k1.markdown(kpi("Months",         str(len(merged)),                               "in period"),         unsafe_allow_html=True)
+    k2.markdown(kpi("Total Received", f"{merged['Received (Kg)'].sum():.0f} Kg",      f"{merged['Received (MT)'].sum():.1f} MT"), unsafe_allow_html=True)
+    k3.markdown(kpi("Total Consumed", f"{merged['Consumed (Kg)'].sum():.0f} Kg",      ""),                  unsafe_allow_html=True)
+    k4.markdown(kpi("Net Change",     f"{merged['Net Change (Kg)'].sum():+.0f} Kg",   "rcv − con"),         unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ── Chart 1: Receipt vs Consumption by month ──
+    fig1 = go.Figure()
+    fig1.add_trace(go.Bar(x=merged['Month'], y=merged['Received (Kg)'],
+                          name='Received (Kg)', marker_color='#43a047', opacity=0.85))
+    fig1.add_trace(go.Bar(x=merged['Month'], y=merged['Consumed (Kg)'],
+                          name='Consumed (Kg)', marker_color='#fb8c00', opacity=0.85))
+    fig1.update_layout(barmode='group', height=340,
+                       title="Monthly Received vs Consumed",
+                       xaxis_title="Month", yaxis_title="Kg",
+                       plot_bgcolor='white', paper_bgcolor='white')
+
+    # ── Chart 2: Net change waterfall ──
+    fig2 = go.Figure(go.Waterfall(
+        name="Net Change",
+        orientation="v",
+        x=merged['Month'],
+        y=merged['Net Change (Kg)'],
+        connector={"line": {"color": "#aaa"}},
+        increasing={"marker": {"color": "#43a047"}},
+        decreasing={"marker": {"color": "#e53935"}},
+    ))
+    fig2.update_layout(height=320, title="Monthly Net Stock Change (Received − Consumed)",
+                       xaxis_title="Month", yaxis_title="Kg",
+                       plot_bgcolor='white', paper_bgcolor='white')
+
+    # ── Chart 3: Consumption trend line ──
+    fig3 = go.Figure()
+    fig3.add_trace(go.Scatter(x=merged['Month'], y=merged['Consumed (Kg)'],
+                              mode='lines+markers+text',
+                              text=merged['Consumed (Kg)'].astype(int).astype(str),
+                              textposition='top center',
+                              line=dict(color='#fb8c00', width=2.5),
+                              name='Consumed (Kg)'))
+    fig3.add_trace(go.Scatter(x=merged['Month'], y=merged['Avg Con. (Kg)'],
+                              mode='lines', name='Avg per Event',
+                              line=dict(color='#1e88e5', width=1.5, dash='dot')))
+    fig3.update_layout(height=300, title="Monthly Consumption Trend",
+                       plot_bgcolor='white', paper_bgcolor='white')
+
+    c1, c2 = st.columns(2)
+    with c1: st.plotly_chart(fig1, use_container_width=True)
+    with c2: st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig3, use_container_width=True)
+
+    # ── Table ──
+    st.markdown("<div class='section-header'>📋 Monthly Summary Table</div>", unsafe_allow_html=True)
+    st.dataframe(merged, width='stretch', hide_index=True)
+
+    # ── Exports ──
+    st.markdown("---")
+    ex1, ex2 = st.columns(2)
+    with ex1:
+        xlsx = _build_report_excel({'Monthly Summary': merged})
+        st.download_button("📥 Download Excel", data=xlsx,
+                           file_name=f"Monthly_Summary_{ts}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           width='stretch')
+    with ex2:
+        try:
+            pdf = _build_report_pdf("Monthly Summary Report", [
+                {'type': 'heading', 'text': 'Received vs Consumed by Month'},
+                {'type': 'fig',     'fig': fig1},
+                {'type': 'heading', 'text': 'Net Stock Change (Waterfall)'},
+                {'type': 'fig',     'fig': fig2},
+                {'type': 'heading', 'text': 'Consumption Trend'},
+                {'type': 'fig',     'fig': fig3},
+                {'type': 'heading', 'text': 'Monthly Summary Table'},
+                {'type': 'table',   'df': merged},
+            ])
+            st.download_button("📄 Download PDF", data=pdf,
+                               file_name=f"Monthly_Summary_{ts}.pdf",
+                               mime="application/pdf", width='stretch')
+        except Exception as e:
+            st.warning(f"PDF export requires `kaleido` + `reportlab`. Error: {e}")
+
+
+# ── Main Reports renderer ─────────────────────────────────────────────────────
+def render_reports():
+    st.header("📋 Reports")
+    if len(st.session_state.stock_data) == 0:
+        st.warning("No data available.")
+        return
+
+    df = st.session_state.stock_data.copy()
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    # Shared filter bar
+    ddf = _report_filters("rpt", df)
+
+    st.markdown("---")
+
+    # Tab per report
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📈 Stock Movement",
+        "🔥 Consumption Analysis",
+        "📥 Receipt / Procurement",
+        "📅 Monthly Summary",
+    ])
+    with tab1: _render_stock_movement(ddf, ts)
+    with tab2: _render_consumption_analysis(ddf, ts)
+    with tab3: _render_receipt_report(ddf, ts)
+    with tab4: _render_monthly_summary(ddf, ts)
+
+
+# ============================================================
+# MODULE 8 — DOWNLOAD DATA (renamed, kept for raw file exports)
 # ============================================================
 def render_download_reports():
-    st.header("💾 Download Reports")
+    st.header("💾 Download Raw Data")
     st.markdown(
         "<div class='section-header'>"
-        "📁 Choose your report, type a filename, then click Download."
+        "📁 Download raw CSV / Excel files. For charts and analysis go to 📋 Reports."
         "</div>",
         unsafe_allow_html=True
     )
@@ -2069,7 +2730,8 @@ else:
     elif action == "📖 View Register":     render_register()
     elif action == "✏️ Edit Entry":        render_edit()
     elif action == "📊 Analytics":         render_analytics()
-    elif action == "💾 Download Reports":  render_download_reports()
+    elif action == "📋 Reports":           render_reports()
+    elif action == "💾 Download Data":     render_download_reports()
     elif action == "📤 Import Data":       render_import()
 
 
