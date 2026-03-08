@@ -8,7 +8,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from io import BytesIO
 import os
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
 
 # ============================================================
 # CONFIGURATION & CONSTANTS
@@ -182,79 +183,86 @@ div[data-testid="stHorizontalBlock"] { align-items:center; }
 
 
 # ============================================================
-# DATA PERSISTENCE — Google Sheets (FIXED)
+# DATA PERSISTENCE — Direct gspread (no st-gsheets-connection)
 # ============================================================
 
-def _get_conn():
+GSHEETS_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+
+
+@st.cache_resource
+def _get_gspread_client():
     """
-    Return a GSheetsConnection.  Cached as a resource so the same
-    authenticated client is reused; call st.cache_resource.clear()
-    when you need a brand-new connection.
+    Build and cache an authenticated gspread client using the
+    service account credentials stored in st.secrets.
+    The @st.cache_resource decorator means this runs once per
+    server process — not once per user session.
     """
-    return st.connection("gsheets", type=GSheetsConnection)
+    creds_dict = dict(st.secrets["connections"]["gsheets"])
+    # Remove non-credential keys that st-gsheets-connection adds
+    for key in ("spreadsheet", "type", "allow_programmatic_writes"):
+        creds_dict.pop(key, None)
+
+    creds = Credentials.from_service_account_info(creds_dict, scopes=GSHEETS_SCOPES)
+    return gspread.authorize(creds)
+
+
+def _get_worksheet():
+    """Return the StockData worksheet object."""
+    client      = _get_gspread_client()
+    spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+    sh          = client.open_by_url(spreadsheet_url)
+    try:
+        ws = sh.worksheet("StockData")
+    except gspread.exceptions.WorksheetNotFound:
+        # Create the sheet with headers if it doesn't exist yet
+        ws = sh.add_worksheet(title="StockData", rows=1000, cols=20)
+        ws.append_row(STOCK_COLUMNS)
+    return ws
 
 
 def _sanitize_for_sheets(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Replace every NaN / None / NaT with a safe default before
-    sending to Google Sheets.  conn.update() silently aborts when
-    it encounters null values in certain column types.
-    """
+    """Replace NaN/None/NaT with safe defaults before writing."""
     out = df.copy()
-
-    # Format dates as plain strings — GSheets handles these fine
     out['Date'] = pd.to_datetime(out['Date']).dt.strftime('%Y-%m-%d %H:%M:%S')
-
-    # Numeric columns → 0.0 instead of NaN
     num_cols = [
-        'Entry ID',
-        'Opening Stock (Kg)',
-        'Received from Store (MT)',
-        'Received from Store (Kg)',
-        'Used for Sidewall Repair (Kg)',
-        'Closing Stock (Kg)',
+        'Entry ID', 'Opening Stock (Kg)',
+        'Received from Store (MT)', 'Received from Store (Kg)',
+        'Used for Sidewall Repair (Kg)', 'Closing Stock (Kg)',
         'Total Consumption Till Date (Kg)',
     ]
     for col in num_cols:
         if col in out.columns:
             out[col] = pd.to_numeric(out[col], errors='coerce').fillna(0.0)
-
-    # String columns → empty string instead of NaN
     for col in ['Entry Type', 'Remarks']:
         if col in out.columns:
             out[col] = out[col].fillna('').astype(str)
-
     return out
 
 
 def load_data() -> pd.DataFrame:
-    """
-    Read the StockData worksheet from Google Sheets.
-    Returns an empty DataFrame (with correct columns) if the sheet
-    is blank or an error occurs — never returns None.
-    """
+    """Read all rows from the StockData worksheet."""
     try:
-        conn = _get_conn()
-        # ttl=0  →  always fetch fresh data from Google
-        df = conn.read(worksheet="StockData", ttl=0, usecols=STOCK_COLUMNS)
+        ws      = _get_worksheet()
+        records = ws.get_all_records(expected_headers=STOCK_COLUMNS)
 
-        # Drop completely empty rows Google Sheets sometimes appends
+        if not records:
+            return pd.DataFrame(columns=STOCK_COLUMNS)
+
+        df = pd.DataFrame(records)
         df = df.dropna(how='all').reset_index(drop=True)
 
         if len(df) == 0:
             return pd.DataFrame(columns=STOCK_COLUMNS)
 
-        # Parse dates robustly
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
 
-        # Coerce all numeric columns (guards against stray strings)
         num_cols = [
-            'Entry ID',
-            'Opening Stock (Kg)',
-            'Received from Store (MT)',
-            'Received from Store (Kg)',
-            'Used for Sidewall Repair (Kg)',
-            'Closing Stock (Kg)',
+            'Entry ID', 'Opening Stock (Kg)',
+            'Received from Store (MT)', 'Received from Store (Kg)',
+            'Used for Sidewall Repair (Kg)', 'Closing Stock (Kg)',
             'Total Consumption Till Date (Kg)',
         ]
         for col in num_cols:
@@ -263,7 +271,6 @@ def load_data() -> pd.DataFrame:
 
         df['Entry ID'] = df['Entry ID'].astype(int)
         df['Remarks']  = df['Remarks'].fillna('').astype(str)
-
         return df
 
     except Exception as e:
@@ -273,42 +280,41 @@ def load_data() -> pd.DataFrame:
 
 def save_data(df: pd.DataFrame) -> bool:
     """
-    Overwrite the StockData worksheet with df.
-
-    Key fixes vs. original:
-      1. _sanitize_for_sheets() ensures no NaN reaches conn.update()
-      2. st.cache_resource.clear() forces a fresh connection object
-         so the next conn.read() actually hits the network.
-      3. Wrapped in a retry (once) in case of transient API errors.
+    Overwrite the StockData worksheet with the full DataFrame.
+    Uses clear() + update() so every save is a clean atomic write.
     """
-    if df is None or len(df) == 0:
-        # Still write the header row so the sheet is not orphaned
-        df = pd.DataFrame(columns=STOCK_COLUMNS)
+    try:
+        if df is None or len(df) == 0:
+            df = pd.DataFrame(columns=STOCK_COLUMNS)
 
-    df_out = _sanitize_for_sheets(df)
+        df_out = _sanitize_for_sheets(df)
+        ws     = _get_worksheet()
 
-    for attempt in range(2):          # try twice before giving up
-        try:
-            conn = _get_conn()
-            conn.update(worksheet="StockData", data=df_out)
+        # Build list-of-lists: header row + data rows
+        header = STOCK_COLUMNS
+        rows   = df_out[STOCK_COLUMNS].values.tolist()
 
-            # ── CRITICAL FIX ──────────────────────────────────────────
-            # Clear the *resource* cache so the connection object is
-            # rebuilt on next call, forcing a real network read.
-            # (cache_data.clear() alone does NOT achieve this.)
-            st.cache_resource.clear()
-            # ─────────────────────────────────────────────────────────
-            return True
+        # Convert every value to a JSON-safe Python type
+        safe_rows = []
+        for row in rows:
+            safe_row = []
+            for val in row:
+                if val is None or (isinstance(val, float) and pd.isna(val)):
+                    safe_row.append('')
+                elif isinstance(val, (int, float, str, bool)):
+                    safe_row.append(val)
+                else:
+                    safe_row.append(str(val))
+            safe_rows.append(safe_row)
 
-        except Exception as e:
-            if attempt == 0:
-                # First failure: clear everything and retry once
-                st.cache_resource.clear()
-                continue
-            st.error(f"❌ Error saving data to Google Sheets: {e}")
-            return False
+        # Atomic write: clear sheet, write header, write data
+        ws.clear()
+        ws.update('A1', [header] + safe_rows)
+        return True
 
-    return False
+    except Exception as e:
+        st.error(f"❌ Error saving data to Google Sheets: {e}")
+        return False
 
 
 # ============================================================
