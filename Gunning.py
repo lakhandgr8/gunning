@@ -384,57 +384,66 @@ def _sanitize_for_sheets(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_data() -> pd.DataFrame:
-    """Read all rows from the StockData worksheet."""
-    try:
-        ws      = _get_worksheet()
-        records = ws.get_all_records(expected_headers=STOCK_COLUMNS)
+    """Read all rows from the StockData worksheet — with retry on failure."""
+    import time, traceback
+    last_exc = None
+    for attempt in range(3):
+        try:
+            ws      = _get_worksheet()
+            records = ws.get_all_records(expected_headers=STOCK_COLUMNS)
 
-        if not records:
-            return pd.DataFrame(columns=STOCK_COLUMNS)
+            if not records:
+                return pd.DataFrame(columns=STOCK_COLUMNS)
 
-        df = pd.DataFrame(records)
-        df = df.dropna(how='all').reset_index(drop=True)
+            df = pd.DataFrame(records)
+            df = df.dropna(how='all').reset_index(drop=True)
 
-        if len(df) == 0:
-            return pd.DataFrame(columns=STOCK_COLUMNS)
+            if len(df) == 0:
+                return pd.DataFrame(columns=STOCK_COLUMNS)
 
-        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
 
-        num_cols = [
-            'Entry ID', 'Opening Stock (Kg)',
-            'Received from Store (MT)', 'Received from Store (Kg)',
-            'Used for Sidewall Repair (Kg)', 'Closing Stock (Kg)',
-            'Total Consumption Till Date (Kg)',
-        ]
-        for col in num_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+            num_cols = [
+                'Entry ID', 'Opening Stock (Kg)',
+                'Received from Store (MT)', 'Received from Store (Kg)',
+                'Used for Sidewall Repair (Kg)', 'Closing Stock (Kg)',
+                'Total Consumption Till Date (Kg)',
+            ]
+            for col in num_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
-        df['Entry ID'] = df['Entry ID'].astype(int)
-        df['Remarks']  = df['Remarks'].fillna('').astype(str)
-        return df
+            df['Entry ID'] = df['Entry ID'].astype(int)
+            df['Remarks']  = df['Remarks'].fillna('').astype(str)
+            return df
 
-    except Exception as e:
-        import traceback
-        st.error(f"❌ LOAD ERROR — {type(e).__name__}: {e}")
-        st.code(traceback.format_exc())
-        return pd.DataFrame(columns=STOCK_COLUMNS)
+        except Exception as e:
+            last_exc = e
+            if attempt < 2:
+                time.sleep(2)   # wait before retry
+
+    # All 3 attempts failed — show error but return SENTINEL so app does NOT reset
+    st.error(f"❌ LOAD ERROR after 3 attempts — {type(last_exc).__name__}: {last_exc}")
+    st.code(traceback.format_exc())
+    # Return None so caller knows load genuinely failed (not just empty sheet)
+    return None
 
 
 def save_data(df: pd.DataFrame) -> bool:
     """
     Overwrite the StockData worksheet with the full DataFrame.
-    Uses clear() + update() for an atomic write.
+    SAFETY: never clears the sheet unless we have valid rows to write.
     """
     try:
-        if df is None or len(df) == 0:
-            df = pd.DataFrame(columns=STOCK_COLUMNS)
+        if df is None:
+            st.error("❌ SAVE BLOCKED — DataFrame is None.")
+            return False
 
         df_out = _sanitize_for_sheets(df)
         ws     = _get_worksheet()
 
-        header = STOCK_COLUMNS
-        rows   = df_out[STOCK_COLUMNS].values.tolist()
+        header    = STOCK_COLUMNS
+        rows      = df_out[STOCK_COLUMNS].values.tolist()
 
         safe_rows = []
         for row in rows:
@@ -448,8 +457,20 @@ def save_data(df: pd.DataFrame) -> bool:
                     safe_row.append(str(val))
             safe_rows.append(safe_row)
 
+        # SAFETY CHECK — never wipe the sheet if we have nothing to write
+        # (this prevents accidental data loss on API hiccups)
+        if len(safe_rows) == 0:
+            # Only allow clearing if it's an intentional full reset
+            # (called from do_delete when all entries deleted)
+            import traceback as _tb
+            stack = ''.join(_tb.format_stack())
+            if 'do_delete' not in stack:
+                st.warning("⚠️ Save skipped — no rows to write. Sheet unchanged.")
+                return False
+
         ws.clear()
         ws.update('A1', [header] + safe_rows)
+
         return True
 
     except Exception as e:
@@ -802,9 +823,20 @@ def append_row(row: pd.DataFrame):
 # ============================================================
 if 'stock_data' not in st.session_state:
     loaded = load_data()
-    st.session_state.stock_data = loaded
+    if loaded is None:
+        # Load failed — hold state as None so we don't accidentally reset sheet
+        st.session_state.stock_data  = None
+        st.session_state.load_failed = True
+    else:
+        st.session_state.stock_data  = loaded
+        st.session_state.load_failed = False
 if 'initial_stock_set' not in st.session_state:
-    st.session_state.initial_stock_set = len(st.session_state.stock_data) > 0
+    st.session_state.initial_stock_set = (
+        st.session_state.stock_data is not None and
+        len(st.session_state.stock_data) > 0
+    )
+
+
 if 'low_thr' not in st.session_state:
     st.session_state.low_thr = DEFAULT_LOW_STOCK_THRESHOLD
 if 'selected_ids' not in st.session_state:
@@ -933,6 +965,18 @@ with st.sidebar:
 # ============================================================
 def render_initial_setup():
     st.header("🚀 Initial Stock Setup")
+
+    # SAFETY: Double-check Google Sheets directly before allowing setup
+    # This prevents accidental overwrite if session state was empty due to restart
+    _live_check = load_data()
+    if _live_check is not None and len(_live_check) > 0:
+        st.session_state.stock_data        = _live_check
+        st.session_state.initial_stock_set = True
+        st.session_state.load_failed       = False
+        st.warning("⚠️ Data found in Google Sheets — loading now. Setup blocked to protect existing data.")
+        st.rerun()
+        return
+
     st.info("No data found. Set the opening stock to begin tracking.")
 
     with st.form("init_form"):
@@ -2841,7 +2885,15 @@ def render_import():
 # ============================================================
 # MAIN ROUTER
 # ============================================================
-if not is_init() or len(st.session_state.stock_data) == 0:
+if st.session_state.get("load_failed"):
+    st.error("⚠️ Could not load data from Google Sheets. Your data is safe — this is a temporary connection issue.")
+    st.info("Please wait a moment and then click the button below to retry.")
+    if st.button("🔄 Retry Loading Data", type="primary"):
+        for k in ["stock_data", "load_failed"]:
+            st.session_state.pop(k, None)
+        st.rerun()
+    st.stop()
+elif not is_init() or st.session_state.stock_data is None or len(st.session_state.stock_data) == 0:
     render_initial_setup()
 else:
     if   action == "🏠 Dashboard":        render_dashboard()
